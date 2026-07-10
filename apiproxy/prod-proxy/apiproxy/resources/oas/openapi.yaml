@@ -1,0 +1,562 @@
+openapi: 3.0.3
+info:
+  title: Biscuit Coffee Shop API
+  description: API for Biscuit Coffee Shop providing tools for ordering, menu management, loyalty programs, and operational queries.
+  version: 1.0.0
+servers:
+  - url: https://@APIGEE_PROD_HOSTNAME@/biscuit-coffee
+    description: Production server
+paths:
+  /location:
+    get:
+      summary: Get store address location
+      operationId: getStoreLocation
+      security: []
+      responses:
+        '200':
+          description: The physical address of the coffee shop
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StoreLocationResponse'
+  /loyalty/signup:
+    post:
+      summary: Sign up for loyalty rewards
+      operationId: signUpLoyalty
+      security:
+        - OpenIDConnect:
+            - biscuit_coffee_customer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                email:
+                  type: string
+                  format: email
+                  description: The user's email address.
+                name:
+                  type: string
+                  description: The user's full name.
+                phone:
+                  type: string
+                  description: The user's optional phone number.
+              required:
+                - email
+                - name
+      responses:
+        '200':
+          description: Successful signup message
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+  /loyalty/balance:
+    get:
+      summary: Get user reward balance
+      operationId: getRewardBalance
+      parameters:
+        - in: query
+          name: email
+          required: true
+          schema:
+            type: string
+            format: email
+          description: The user's email address.
+      responses:
+        '200':
+          description: The loyalty point balance for the user
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoyaltyBalanceResponse'
+  /hours:
+    get:
+      summary: Get hours of operation
+      operationId: getHoursOfOperation
+      security: []
+      responses:
+        '200':
+          description: The current hours of operation for the coffee shop
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HoursResponse'
+  /menu:
+    get:
+      summary: Get coffee shop menu
+      operationId: getMenu
+      security: []
+      responses:
+        '200':
+          description: The current menu items available and their prices
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MenuResponse'
+  /payment-methods:
+    get:
+      summary: Retrieve saved payment methods
+      operationId: getPaymentMethods
+      security:
+        - OpenIDConnect:
+            - biscuit_coffee_customer
+      parameters:
+        - in: query
+          name: email
+          required: true
+          schema:
+            type: string
+            format: email
+          description: The user's email address.
+      responses:
+        '200':
+          description: A list of payment methods
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentMethodsResponse'
+    post:
+      summary: Add a payment method
+      operationId: addPaymentMethod
+      security:
+        - OpenIDConnect:
+            - biscuit_coffee_customer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                email:
+                  type: string
+                  format: email
+                  description: The user's email address.
+                payment_details:
+                  type: object
+                  properties:
+                    id:
+                      type: string
+                      example: pm-456
+                    card_number:
+                      type: string
+                      description: The full credit card number.
+                    expiration:
+                      type: string
+                      example: 12/27
+                      description: Expiration date in MM/YY format.
+                    cvv:
+                      type: string
+                      description: Security code from the back of the card.
+                  required:
+                    - id
+                    - card_number
+                    - expiration
+                    - cvv
+              required:
+                - email
+                - payment_details
+      responses:
+        '200':
+          description: Success confirmation
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+  /payment-methods/{id}:
+    get:
+      summary: Retrieve a specific payment method by ID
+      security:
+        - OpenIDConnect:
+            - biscuit_coffee_customer
+      operationId: getPaymentMethodById
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+          description: The unique identifier of the payment method.
+      responses:
+        '200':
+          description: The details of the payment method
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentMethodDetails'
+  /employees:
+    get:
+      summary: List all coffee shop employees
+      security:
+        - OpenIDConnect:
+            - biscuit_coffee_manager
+      operationId: listEmployees
+      responses:
+        '200':
+          description: A list of coffee shop employees
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EmployeeListResponse'
+  /orders:
+    get:
+      summary: List all orders
+      operationId: listOrders
+      parameters:
+        - in: query
+          name: filter
+          required: false
+          schema:
+            type: string
+            example: "email:customer@example.com"
+          description: "Filter orders by criteria using the format 'key:value'. Supported keys: email, name, loyalty_id."
+      responses:
+        '200':
+          description: A list of all placed orders
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderListResponse'
+    post:
+      summary: Place a new order
+      operationId: placeOrder
+      security:
+        - OpenIDConnect:
+            - biscuit_coffee_customer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                payment_method_id:
+                  type: string
+                items:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      item_id:
+                        type: string
+                      quantity:
+                        type: integer
+                    required:
+                      - item_id
+                      - quantity
+                email:
+                  type: string
+                  format: email
+                  description: The user's email address (provide either email or name).
+                name:
+                  type: string
+                  description: The user's name (provide either email or name).
+              required:
+                - payment_method_id
+                - items
+      responses:
+        '200':
+          description: Order placement confirmation and ID
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  order_id:
+                    type: string
+                  message:
+                    type: string
+                required:
+                  - order_id
+                  - message
+  /orders/{id}:
+    delete:
+      summary: Cancel an existing order
+      operationId: cancelOrder
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+          description: The unique ID of the order to cancel.
+      responses:
+        '200':
+          description: Order cancellation confirmation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CancelOrderResponse'
+    get:
+      summary: Retrieve a specific order
+      operationId: getOrder
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+          description: The unique ID of the order to retrieve.
+      responses:
+        '200':
+          description: The complete details of the order
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderDetails'
+components:
+  schemas:
+    SignUpLoyaltyRequest:
+      type: object
+      properties:
+        email:
+          type: string
+          format: email
+          description: The user's email address.
+        name:
+          type: string
+          description: The user's full name.
+        phone:
+          type: string
+          description: The user's optional phone number.
+      required:
+        - email
+        - name
+    SignUpLoyaltyResponse:
+      type: object
+      properties:
+        message:
+          type: string
+      required:
+        - message
+    LoyaltyBalanceResponse:
+      type: object
+      properties:
+        points:
+          type: integer
+          description: The user's loyalty point balance.
+      required:
+        - points
+    HoursDayEntry:
+      type: object
+      properties:
+        day:
+          type: string
+          example: Monday
+        hours:
+          type: string
+          example: 7:00 AM - 5:00 PM
+      required:
+        - day
+        - hours
+    HoursResponse:
+      type: array
+      items:
+        $ref: '#/components/schemas/HoursDayEntry'
+    MenuItem:
+      type: object
+      properties:
+        id:
+          type: string
+          example: item-123
+        name:
+          type: string
+          example: Latte
+        size:
+          type: string
+          enum:
+            - small
+            - medium
+            - large
+          example: medium
+        price:
+          type: number
+          format: float
+          example: 3.75
+      required:
+        - id
+        - name
+        - size
+        - price
+    MenuResponse:
+      type: array
+      items:
+        $ref: '#/components/schemas/MenuItem'
+    PaymentMethodDetails:
+      type: object
+      properties:
+        id:
+          type: string
+          example: pm-456
+        card_number:
+          type: string
+          description: The full credit card number.
+        expiration:
+          type: string
+          example: 12/27
+          description: Expiration date in MM/YY format.
+        cvv:
+          type: string
+          description: Security code from the back of the card.
+      required:
+        - id
+        - card_number
+        - expiration
+        - cvv
+    AddPaymentMethodRequest:
+      type: object
+      properties:
+        email:
+          type: string
+          format: email
+          description: The user's email address.
+        payment_details:
+          $ref: '#/components/schemas/PaymentMethodDetails'
+      required:
+        - email
+        - payment_details
+    PaymentMethodsResponse:
+      type: array
+      items:
+        $ref: '#/components/schemas/PaymentMethodDetails'
+    AddPaymentMethodResponse:
+      type: object
+      properties:
+        message:
+          type: string
+      required:
+        - message
+    OrderItem:
+      type: object
+      properties:
+        item_id:
+          type: string
+        quantity:
+          type: integer
+      required:
+        - item_id
+        - quantity
+    OrderDetails:
+      type: object
+      properties:
+        order_id:
+          type: string
+        email:
+          type: string
+        name:
+          type: string
+        loyalty_id:
+          type: string
+        payment_method_id:
+          type: string
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/OrderItem'
+        status:
+          type: string
+        eta_minutes:
+          type: integer
+          description: Estimated time until the order is ready in minutes.
+        total_amount:
+          type: number
+          format: float
+          description: The total cost of the order.
+      required:
+        - order_id
+        - email
+        - payment_method_id
+        - items
+        - status
+        - total_amount
+    OrderListResponse:
+      type: array
+      items:
+        $ref: '#/components/schemas/OrderDetails'
+    PlaceOrderRequest:
+      type: object
+      properties:
+        payment_method_id:
+          type: string
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/OrderItem'
+        email:
+          type: string
+          format: email
+          description: The user's email address (provide either email or name).
+        name:
+          type: string
+          description: The user's name (provide either email or name).
+      required:
+        - payment_method_id
+        - items
+    PlaceOrderResponse:
+      type: object
+      properties:
+        order_id:
+          type: string
+        message:
+          type: string
+      required:
+        - order_id
+        - message
+    CancelOrderResponse:
+      type: object
+      properties:
+        message:
+          type: string
+      required:
+        - message
+    StoreLocationResponse:
+      type: object
+      properties:
+        address:
+          type: string
+          example: 123 Biscuit Lane, Coffee Town, CT 06001
+      required:
+        - address
+    EmployeeDetails:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        phone:
+          type: string
+        email:
+          type: string
+          format: email
+      required:
+        - id
+        - name
+        - phone
+        - email
+    EmployeeListResponse:
+      type: array
+      items:
+        $ref: '#/components/schemas/EmployeeDetails'
+  securitySchemes:
+    OpenIDConnect:
+      type: openIdConnect
+      openIdConnectUrl: https://34.160.173.66.nip.io/realms/apigee-demo/.well-known/openid-configuration
+
+security:
+  - OpenIDConnect:
+      - biscuit_coffee_customer
+      - biscuit_coffee_manager

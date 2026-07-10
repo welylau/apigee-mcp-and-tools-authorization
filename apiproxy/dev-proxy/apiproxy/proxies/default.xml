@@ -1,0 +1,157 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<ProxyEndpoint name="default">
+  <Description/>
+  <FaultRules/>
+  <PreFlow name="PreFlow">
+    <Request>
+      <Step>
+        <Name>EV-GetId</Name>
+      </Step>
+      <Step>
+        <Name>JS-GetFilter</Name>
+      </Step>
+    </Request>
+    <Response/>
+  </PreFlow>
+  <PostFlow name="PostFlow">
+    <Request/>
+    <Response/>
+  </PostFlow>
+  <Flows>
+    <Flow name="getStoreLocation">
+      <Description>Get store address location</Description>
+      <Request/>
+      <Response>
+        <Step>
+          <Name>AM-GetStoreLocation</Name>
+        </Step>
+      </Response>
+      <Condition>(proxy.pathsuffix MatchesPath "/location") and (request.verb = "GET")</Condition>
+    </Flow>
+    <Flow name="listEmployees">
+      <Description>List all employees</Description>
+      <Request/>
+      <Response>
+        <Step>
+          <Name>AM-ListEmployees</Name>
+        </Step>
+      </Response>
+      <Condition>(proxy.pathsuffix MatchesPath "/employees") and (request.verb = "GET")</Condition>
+    </Flow>
+    <Flow name="signUpLoyalty">
+      <Description>Sign up for loyalty rewards</Description>
+      <Request/>
+      <Response>
+        <Step>
+          <Name>AM-SignUpLoyalty</Name>
+        </Step>
+      </Response>
+      <Condition>(proxy.pathsuffix MatchesPath "/loyalty/signup") and (request.verb = "POST")</Condition>
+    </Flow>
+    <Flow name="getRewardBalance">
+      <Description>Get user reward balance</Description>
+      <Request/>
+      <Response>
+        <Step>
+          <Name>AM-GetRewardBalance</Name>
+        </Step>
+      </Response>
+      <Condition>(proxy.pathsuffix MatchesPath "/loyalty/balance") and (request.verb = "GET")</Condition>
+    </Flow>
+    <Flow name="getHoursOfOperation">
+      <Description>Get hours of operation</Description>
+      <Request/>
+      <Response>
+        <Step>
+          <Name>AM-GetHoursOfOperation</Name>
+        </Step>
+      </Response>
+      <Condition>(proxy.pathsuffix MatchesPath "/hours") and (request.verb = "GET")</Condition>
+    </Flow>
+    <Flow name="getMenu">
+      <Description>Get coffee shop menu</Description>
+      <Request/>
+      <Response>
+        <Step>
+          <Name>AM-GetMenu</Name>
+        </Step>
+      </Response>
+      <Condition>(proxy.pathsuffix MatchesPath "/menu") and (request.verb = "GET")</Condition>
+    </Flow>
+    <Flow name="getPaymentMethods">
+      <Description>Retrieve saved payment methods</Description>
+      <Request/>
+      <Response>
+        <Step>
+          <Name>AM-GetPaymentMethods</Name>
+        </Step>
+      </Response>
+      <Condition>(proxy.pathsuffix MatchesPath "/payment-methods") and (request.verb = "GET")</Condition>
+    </Flow>
+    <Flow name="addPaymentMethod">
+      <Description>Add a payment method</Description>
+      <Request/>
+      <Response>
+        <Step>
+          <Name>AM-AddPaymentMethod</Name>
+        </Step>
+      </Response>
+      <Condition>(proxy.pathsuffix MatchesPath "/payment-methods") and (request.verb = "POST")</Condition>
+    </Flow>
+    <Flow name="getPaymentMethodById">
+      <Description>Retrieve a specific payment method by ID</Description>
+      <Request/>
+      <Response>
+        <Step>
+          <Name>AM-GetPaymentMethodById</Name>
+        </Step>
+      </Response>
+      <Condition>(proxy.pathsuffix MatchesPath "/payment-methods/{id}") and (request.verb = "GET")</Condition>
+    </Flow>
+    <Flow name="listOrders">
+      <Description>List all orders</Description>
+      <Request/>
+      <Response>
+        <Step>
+          <Name>AM-ListOrders</Name>
+        </Step>
+      </Response>
+      <Condition>(proxy.pathsuffix MatchesPath "/orders") and (request.verb = "GET")</Condition>
+    </Flow>
+    <Flow name="placeOrder">
+      <Description>Place a new order</Description>
+      <Request/>
+      <Response>
+        <Step>
+          <Name>AM-PlaceOrder</Name>
+        </Step>
+      </Response>
+      <Condition>(proxy.pathsuffix MatchesPath "/orders") and (request.verb = "POST")</Condition>
+    </Flow>
+    <Flow name="getOrder">
+      <Description>Retrieve a specific order</Description>
+      <Request/>
+      <Response>
+        <Step>
+          <Name>AM-GetOrder</Name>
+        </Step>
+      </Response>
+      <Condition>(proxy.pathsuffix MatchesPath "/orders/{order_id}") and (request.verb = "GET")</Condition>
+    </Flow>
+    <Flow name="cancelOrder">
+      <Description>Cancel an existing order</Description>
+      <Request/>
+      <Response>
+        <Step>
+          <Name>AM-CancelOrder</Name>
+        </Step>
+      </Response>
+      <Condition>(proxy.pathsuffix MatchesPath "/orders/{order_id}") and (request.verb = "DELETE")</Condition>
+    </Flow>
+  </Flows>
+  <HTTPProxyConnection>
+    <BasePath>/biscuit-coffee</BasePath>
+    <Properties/>
+  </HTTPProxyConnection>
+  <RouteRule name="default"/>
+</ProxyEndpoint>

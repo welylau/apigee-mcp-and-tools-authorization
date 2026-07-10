@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<AssignMessage name="AM-ListEmployees">
+  <Set>
+    <Payload contentType="application/json">[
+  {
+    "id": "emp-101",
+    "name": "Jordan Smith",
+    "phone": "555-010-2345",
+    "email": "jordan.smith@gmail.com"
+  },
+  {
+    "id": "emp-102",
+    "name": "Casey Montgomery",
+    "phone": "555-012-9876",
+    "email": "casey.m@gmail.com"
+  },
+  {
+    "id": "emp-103",
+    "name": "Alex Rivera",
+    "phone": "555-015-4433",
+    "email": "arivera@hotmail.com"
+  },
+  {
+    "id": "emp-104",
+    "name": "Taylor Chen",
+    "phone": "555-018-7766",
+    "email": "tchen.design@gmail.com"
+  },
+  {
+    "id": "emp-105",
+    "name": "Morgan Pierce",
+    "phone": "555-019-1122",
+    "email": "mpierce@yahoo.com"
+  },
+  {
+    "id": "emp-106",
+    "name": "Riley Vance",
+    "phone": "555-020-5588",
+    "email": "rvance@sky.com"
+  },
+  {
+    "id": "emp-107",
+    "name": "Jamie Thorne",
+    "phone": "555-021-3344",
+    "email": "j.thorne@gmail.com"
+  },
+  {
+    "id": "emp-108",
+    "name": "Skyler Brooks",
+    "phone": "555-022-6677",
+    "email": "sbrooks@hotmail.com"
+  }
+]</Payload>
+    <StatusCode>200</StatusCode>
+  </Set>
+  <IgnoreUnresolvedVariables>true</IgnoreUnresolvedVariables>
+  <AssignTo createNew="false" transport="http" type="response"/>
+</AssignMessage>

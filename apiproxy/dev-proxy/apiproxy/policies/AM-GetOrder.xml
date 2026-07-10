@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<AssignMessage name="AM-GetOrder">
+  <Set>
+    <Payload contentType="application/json">{
+    "order_id": "{orderId}",
+    "email": "senthil_d@notarealemail.com",
+    "name": "Senthil Doriswamy",
+    "loyalty_id": "L-23876",
+    "payment_method_id": "pm-834",
+    "items":
+    [
+        {
+            "item_id": "item-9-s",
+            "quantity": 2
+        }
+    ],
+    "status": "IN_PROGRESS",
+    "eta_minutes": "{xeger( '[5-9]{1}' )}",
+    "total_amount": 7.50
+}</Payload>
+    <StatusCode>200</StatusCode>
+  </Set>
+  <IgnoreUnresolvedVariables>true</IgnoreUnresolvedVariables>
+  <AssignTo createNew="false" transport="http" type="response"/>
+</AssignMessage>

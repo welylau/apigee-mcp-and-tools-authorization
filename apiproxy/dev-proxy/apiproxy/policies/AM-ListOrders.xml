@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<AssignMessage name="AM-ListOrders">
+  <Set>
+    <Payload contentType="application/json">[
+    {
+        "order_id": "{xeger( '[1-9]{5}' )}",
+        "email": "senthil_d@notarealemail.com",
+        "name": "Senthil Doriswamy",
+        "loyalty_id": "L-23876",
+        "payment_method_id": "pm-834",
+        "items":
+        [
+            {
+                "item_id": "item-9-s",
+                "quantity": 2
+            }
+        ],
+        "status": "COMPLETE",
+        "total_amount": 7.50
+    },
+    {
+        "order_id": "{xeger( '[1-9]{5}' )}",
+        "email": "adrian_t@notarealemail.com",
+        "name": "Adrian Tatsch",
+        "loyalty_id": "L-89723",
+        "payment_method_id": "pm-273",
+        "items":
+        [
+            {
+                "item_id": "item-4-s",
+                "quantity": 1
+            },
+            {
+                "item_id": "item-3-l",
+                "quantity": 2
+            }
+        ],
+        "status": "IN_PROGESS",
+        "eta_minutes": "{xeger( '[5-9]{1}' )}",        
+        "total_amount": 13.75
+    },
+    {
+        "order_id": "{xeger( '[1-9]{5}' )}",
+        "email": "davidrush@google.com",
+        "name": "David Rush",
+        "loyalty_id": "L-92334",
+        "payment_method_id": "pm-448",
+        "items":
+        [
+            {
+                "item_id": "item-4-s",
+                "quantity": 2
+            }
+        ],
+        "status": "IN_PROGESS",
+        "eta_minutes": "{xeger( '[5-9]{1}' )}",        
+        "total_amount": 6.50
+    }
+]</Payload>
+    <StatusCode>200</StatusCode>
+  </Set>
+  <IgnoreUnresolvedVariables>true</IgnoreUnresolvedVariables>
+  <AssignTo createNew="false" transport="http" type="response"/>
+</AssignMessage>

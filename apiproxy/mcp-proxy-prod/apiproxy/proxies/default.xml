@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<ProxyEndpoint name="default">
+  <HTTPProxyConnection>
+    <BasePath>/mcp</BasePath>
+  </HTTPProxyConnection>
+  <PreFlow name="PreFlow">
+    <Request>
+      <Step>
+        <Name>CORS-Allow</Name>
+      </Step>
+      <Step>
+        <Name>JWT-Decode</Name>
+      </Step>
+      <Step>
+        <Name>PP-ParseMCPTools</Name>
+      </Step>
+      <Step>
+        <Name>VA-VerifyKey</Name>
+      </Step>
+    </Request>
+    <Response/>
+  </PreFlow>
+  <RouteRule name="default">
+    <TargetEndpoint>default</TargetEndpoint>
+  </RouteRule>
+</ProxyEndpoint>

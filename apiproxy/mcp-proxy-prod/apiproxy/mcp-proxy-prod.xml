@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<APIProxy revision="1" name="mcp-proxy-prod">
+  <DisplayName>mcp-proxy-prod</DisplayName>
+  <Description>Production Apigee MCP Server</Description>
+  <BasePaths>/mcp</BasePaths>
+  <BasePaths>/.well-known/oauth-protected-resource/mcp</BasePaths>
+  <Policies>
+    <Policy>CORS-Allow</Policy>
+    <Policy>PP-ParseMCPTools</Policy>
+    <Policy>JWT-Decode</Policy>
+    <Policy>VA-VerifyKey</Policy>
+  </Policies>
+  <ProxyEndpoints>
+    <ProxyEndpoint>default</ProxyEndpoint>
+    <ProxyEndpoint>oauth-prm-endpoint</ProxyEndpoint>
+  </ProxyEndpoints>
+  <Resources>
+    <Resource>oas://openapi.yaml</Resource>
+  </Resources>
+  <TargetEndpoints>
+    <TargetEndpoint>default</TargetEndpoint>
+    <TargetEndpoint>oauth-prm-endpoint</TargetEndpoint>
+  </TargetEndpoints>
+</APIProxy>

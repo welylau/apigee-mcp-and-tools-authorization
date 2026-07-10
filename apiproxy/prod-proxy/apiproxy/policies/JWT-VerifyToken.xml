@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<VerifyJWT continueOnError="false" enabled="true" name="JWT-VerifyToken">
+  <Algorithm>RS256</Algorithm>
+  <PublicKey>
+    <JWKS uriRef="propertyset.idp-config.jwks_uri"/>
+  </PublicKey>
+  <Issuer ref="propertyset.idp-config.issuer"/>
+  <Audience ref="propertyset.idp-config.audience"/>
+</VerifyJWT>

@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<AssignMessage name="AM-ListOrders">
+  <Set>
+    <Payload contentType="application/json">[
+    {
+        "order_id": "{xeger( '[1-9]{5}' )}",
+        "email": "{jwt.JWT-VerifyToken.claim.email:customer@example.com}",
+        "name": "{jwt.JWT-VerifyToken.claim.name:David}",
+        "loyalty_id": "{loyalty_id:L-12345}",
+        "payment_method_id": "pm-456",
+        "items":
+        [
+            {
+                "item_id": "item-1-s",
+                "quantity": 2
+            }
+        ],
+        "status": "COMPLETE",
+        "total_amount": 6.50
+    },
+    {
+        "order_id": "{xeger( '[1-9]{5}' )}",
+        "email": "{jwt.JWT-VerifyToken.claim.email:customer@example.com}",
+        "name": "{jwt.JWT-VerifyToken.claim.name:David}",
+        "loyalty_id": "{loyalty_id:L-12345}",
+        "payment_method_id": "pm-456",
+        "items":
+        [
+            {
+                "item_id": "item-2-s",
+                "quantity": 1
+            },
+            {
+                "item_id": "item-3-m",
+                "quantity": 2
+            }
+        ],
+        "status": "IN_PROGESS",
+        "eta_minutes": "{xeger( '[5-9]{1}' )}",        
+        "total_amount": 11.00
+    }
+]</Payload>
+    <StatusCode>200</StatusCode>
+  </Set>
+  <IgnoreUnresolvedVariables>true</IgnoreUnresolvedVariables>
+  <AssignTo createNew="false" transport="http" type="response"/>
+</AssignMessage>
