@@ -10,6 +10,8 @@ The demo requires the following tools:
 * git
 * gcloud SDK
 * apigeecli
+* jq
+* uv (Python package manager used to run the agent)
 
 It also requires:
 * A GCP project
