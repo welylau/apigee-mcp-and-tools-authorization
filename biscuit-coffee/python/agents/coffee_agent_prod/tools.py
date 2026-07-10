@@ -8,7 +8,7 @@ from .auth_config import auth_scheme, auth_credential, CLIENT_ID
 load_dotenv()
 
 PROJECT_ID=os.getenv("GOOGLE_CLOUD_PROJECT")
-LOCATION=os.getenv("GOOGLE_CLOUD_LOCATION")
+LOCATION=os.getenv("AGENT_REGISTRY_LOCATION")
 
 def apigee_header_provider(context):
     return {"x-api-key": CLIENT_ID}
