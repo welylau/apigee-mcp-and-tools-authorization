@@ -24,7 +24,7 @@ It also requires:
 
 #### 1. Update .env
 
-Update the project ID, environment names and Apigee hostnames in `.env` then source the file:
+Update the project ID, Apigee environment names & environment group hostnames, plus the Agent Registry location in `.env` then source the file:
 ```bash
 source .env
 ```
