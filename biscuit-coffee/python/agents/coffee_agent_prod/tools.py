@@ -28,8 +28,11 @@ if servers_list:
     )
 else:
     # Fallback directly to the production endpoint if the registry filter returned nothing
+    APIGEE_PROD_HOSTNAME = os.getenv("APIGEE_PROD_HOSTNAME")
+    if not APIGEE_PROD_HOSTNAME:
+        raise ValueError("APIGEE_PROD_HOSTNAME environment variable is not set")
     mcp_toolset = McpToolset(
-        connection_params=StreamableHTTPConnectionParams(url="https://drush-apigee-prod.34-117-138-63.nip.io/mcp"),
+        connection_params=StreamableHTTPConnectionParams(url=f"https://{APIGEE_PROD_HOSTNAME}/mcp"),
         auth_scheme=auth_scheme,
         auth_credential=auth_credential,
         header_provider=apigee_header_provider

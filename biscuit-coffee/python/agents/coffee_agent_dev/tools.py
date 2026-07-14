@@ -1,8 +1,16 @@
+import os
 from datetime import datetime
+from dotenv import load_dotenv
 from google.adk.tools.mcp_tool import McpToolset, StreamableHTTPConnectionParams
 
+load_dotenv()
+
+APIGEE_DEV_HOSTNAME = os.getenv("APIGEE_DEV_HOSTNAME")
+if not APIGEE_DEV_HOSTNAME:
+    raise ValueError("APIGEE_DEV_HOSTNAME environment variable is not set")
+
 mcp_toolset = McpToolset(
-    connection_params=StreamableHTTPConnectionParams(url="https://drush-apigee-dev.34-117-138-63.nip.io/mcp"),
+    connection_params=StreamableHTTPConnectionParams(url=f"https://{APIGEE_DEV_HOSTNAME}/mcp"),
 )
 
 def get_current_time() -> str:
