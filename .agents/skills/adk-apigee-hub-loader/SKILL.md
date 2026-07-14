@@ -25,14 +25,13 @@ You can find MCP servers listed in Apigee API Hub using the `list_apis` tool cal
     *   Determine if the entry in Apigee API Hub represents a:
         *   **REST API:** Typically defined by an OpenAPI Specification. These will have the style attribute set to `REST`.
         *   **MCP Tool/Server:** Specifically registered as an MCP service, likely defined by an MCP schema and crucially, should have an accessible server endpoint URL. These will have the style attribute set to `MCP`.
-    *   You will need to interact with the `api-hub` MCP server to confirm the style, and necessary connection information.
+    *   You will need to interact with the `apigee-api-hub` MCP server to confirm the style, and necessary connection information.
 
 2.  **Choose the Correct ADK Toolset implementation:**
 
     *   **For REST APIs (OpenAPI Spec): Use `APIHubToolset`**
         *   This toolset is designed to parse OpenAPI specifications and create tools for each operation.
         *   You will need to supply the `apihub_resource_name` which typically looks like `projects/<proj>/locations/<loc>/apis/<api_id>`.
-        *   Because I am running in a staging environment, you will need to create a custom APIHubClient with the `root_url` set to "https://staging-apihub.sandbox.googleapis.com". This is included in the example below.
         *   Example Python code for your ADK agent:
             ```python
             from google.adk.tools.apihub_tool import APIHubToolset
@@ -42,15 +41,15 @@ You can find MCP servers listed in Apigee API Hub using the `list_apis` tool cal
             auth_scheme = None # Specify auth if needed
             auth_credential = None # Specify auth if needed
 
-            staging_client = APIHubClient()
-            staging_client.root_url = "https://staging-apihub.us-central1.rep.sandbox.googleapis.com/v1"
+            client = APIHubClient()
+            client.root_url = "https://apihub.googleapis.com/v1"
 
             rest_api_tools = APIHubToolset(
                 name="my_rest_api_from_hub",
                 apihub_resource_name=apihub_api_resource,
                 auth_scheme=auth_scheme,
                 auth_credential=auth_credential,
-                apihub_client=staging_client
+                apihub_client=client
                 # Add other necessary params like service_account_json or access_token
             )
             # Add to agent tools: tools=[*rest_api_tools.get_tools()]
