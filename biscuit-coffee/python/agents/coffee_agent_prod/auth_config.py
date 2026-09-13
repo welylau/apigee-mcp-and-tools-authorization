@@ -2,13 +2,13 @@ from fastapi.openapi.models import OAuth2, OAuthFlowAuthorizationCode, OAuthFlow
 from google.adk.auth import AuthCredential, AuthCredentialTypes, OAuth2Auth
 
 CLIENT_ID="biscuit-coffee-agent"
-CLIENT_SECRET="oHHeazVDRvTK6aHFMop8cTWgx0MzWFvR"
+CLIENT_SECRET="YOUR_KEYCLOAK_CLIENT_SECRET"
 
 auth_scheme = OAuth2(
     flows=OAuthFlows(
         authorizationCode=OAuthFlowAuthorizationCode(
-            authorizationUrl="https://34.160.173.66.nip.io/realms/apigee-demo/protocol/openid-connect/auth",
-            tokenUrl="https://34.160.173.66.nip.io/realms/apigee-demo/protocol/openid-connect/token",
+            authorizationUrl="https://keycloak.YOUR_KEYCLOAK_IP.nip.io/realms/apigee-demo/protocol/openid-connect/auth",
+            tokenUrl="https://keycloak.YOUR_KEYCLOAK_IP.nip.io/realms/apigee-demo/protocol/openid-connect/token",
             scopes={
                 "biscuit_coffee_customer": "Customer scope",
                 "biscuit_coffee_manager": "Manager scope"

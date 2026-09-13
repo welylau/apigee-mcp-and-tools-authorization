@@ -15,11 +15,10 @@ if [ -z "$PROJECT" ]; then
   exit 1
 fi
 
-DEV_ENV="$APIGEE_DEV_ENV"
-PROD_ENV="$APIGEE_PROD_ENV"
+PROD_ENV="${APIGEE_PROD_ENV:-${APIGEE_ENV:-prod-env}}"
 
-if [ -z "$DEV_ENV" ] || [ -z "$PROD_ENV" ]; then
-  echo "ERROR: APIGEE_DEV_ENV and APIGEE_PROD_ENV must be set"
+if [ -z "$PROD_ENV" ]; then
+  echo "ERROR: APIGEE_PROD_ENV (or APIGEE_ENV) must be set"
   exit 1
 fi
 
@@ -86,12 +85,11 @@ undeploy_and_delete_proxy() {
   apigeecli apis delete --name "$name" --org "$PROJECT" --token "$TOKEN" 2>/dev/null || true
 }
 
-# Cleanup MCP proxies
-undeploy_and_delete_proxy "mcp-proxy-dev" "$DEV_ENV"
+# Cleanup MCP proxy
 undeploy_and_delete_proxy "mcp-proxy-prod" "$PROD_ENV"
 
-# Cleanup Biscuit-Coffee-Shop proxy from both environments
-undeploy_and_delete_proxy "Biscuit-Coffee-Shop" "$DEV_ENV" "$PROD_ENV"
+# Cleanup Biscuit-Coffee-Shop proxy
+undeploy_and_delete_proxy "Biscuit-Coffee-Shop" "$PROD_ENV"
 
 echo "================================================="
 echo "Apigee Cleanup Complete!"

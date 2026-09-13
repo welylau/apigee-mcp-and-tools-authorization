@@ -4,7 +4,7 @@ info:
   description: API for Biscuit Coffee Shop providing tools for ordering, menu management, loyalty programs, and operational queries.
   version: 1.0.0
 servers:
-  - url: https://@APIGEE_PROD_HOSTNAME@/biscuit-coffee
+  - url: https://prod.apigee-demo.com/biscuit-coffee
     description: Production server
 paths:
   /location:
@@ -101,102 +101,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/MenuResponse'
-  /payment-methods:
-    get:
-      summary: Retrieve saved payment methods
-      operationId: getPaymentMethods
-      security:
-        - OpenIDConnect:
-            - biscuit_coffee_customer
-      parameters:
-        - in: query
-          name: email
-          required: true
-          schema:
-            type: string
-            format: email
-          description: The user's email address.
-      responses:
-        '200':
-          description: A list of payment methods
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/PaymentMethodsResponse'
-    post:
-      summary: Add a payment method
-      operationId: addPaymentMethod
-      security:
-        - OpenIDConnect:
-            - biscuit_coffee_customer
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                email:
-                  type: string
-                  format: email
-                  description: The user's email address.
-                payment_details:
-                  type: object
-                  properties:
-                    id:
-                      type: string
-                      example: pm-456
-                    card_number:
-                      type: string
-                      description: The full credit card number.
-                    expiration:
-                      type: string
-                      example: 12/27
-                      description: Expiration date in MM/YY format.
-                    cvv:
-                      type: string
-                      description: Security code from the back of the card.
-                  required:
-                    - id
-                    - card_number
-                    - expiration
-                    - cvv
-              required:
-                - email
-                - payment_details
-      responses:
-        '200':
-          description: Success confirmation
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  message:
-                    type: string
-                required:
-                  - message
-  /payment-methods/{id}:
-    get:
-      summary: Retrieve a specific payment method by ID
-      security:
-        - OpenIDConnect:
-            - biscuit_coffee_customer
-      operationId: getPaymentMethodById
-      parameters:
-        - in: path
-          name: id
-          required: true
-          schema:
-            type: string
-          description: The unique identifier of the payment method.
-      responses:
-        '200':
-          description: The details of the payment method
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/PaymentMethodDetails'
   /employees:
     get:
       summary: List all coffee shop employees
@@ -243,8 +147,6 @@ paths:
             schema:
               type: object
               properties:
-                payment_method_id:
-                  type: string
                 items:
                   type: array
                   items:
@@ -265,7 +167,6 @@ paths:
                   type: string
                   description: The user's name (provide either email or name).
               required:
-                - payment_method_id
                 - items
       responses:
         '200':
@@ -395,50 +296,6 @@ components:
       type: array
       items:
         $ref: '#/components/schemas/MenuItem'
-    PaymentMethodDetails:
-      type: object
-      properties:
-        id:
-          type: string
-          example: pm-456
-        card_number:
-          type: string
-          description: The full credit card number.
-        expiration:
-          type: string
-          example: 12/27
-          description: Expiration date in MM/YY format.
-        cvv:
-          type: string
-          description: Security code from the back of the card.
-      required:
-        - id
-        - card_number
-        - expiration
-        - cvv
-    AddPaymentMethodRequest:
-      type: object
-      properties:
-        email:
-          type: string
-          format: email
-          description: The user's email address.
-        payment_details:
-          $ref: '#/components/schemas/PaymentMethodDetails'
-      required:
-        - email
-        - payment_details
-    PaymentMethodsResponse:
-      type: array
-      items:
-        $ref: '#/components/schemas/PaymentMethodDetails'
-    AddPaymentMethodResponse:
-      type: object
-      properties:
-        message:
-          type: string
-      required:
-        - message
     OrderItem:
       type: object
       properties:
@@ -460,8 +317,6 @@ components:
           type: string
         loyalty_id:
           type: string
-        payment_method_id:
-          type: string
         items:
           type: array
           items:
@@ -478,7 +333,6 @@ components:
       required:
         - order_id
         - email
-        - payment_method_id
         - items
         - status
         - total_amount
@@ -489,8 +343,6 @@ components:
     PlaceOrderRequest:
       type: object
       properties:
-        payment_method_id:
-          type: string
         items:
           type: array
           items:
@@ -503,7 +355,6 @@ components:
           type: string
           description: The user's name (provide either email or name).
       required:
-        - payment_method_id
         - items
     PlaceOrderResponse:
       type: object
@@ -554,7 +405,7 @@ components:
   securitySchemes:
     OpenIDConnect:
       type: openIdConnect
-      openIdConnectUrl: https://34.160.173.66.nip.io/realms/apigee-demo/.well-known/openid-configuration
+      openIdConnectUrl: https://keycloak.YOUR_KEYCLOAK_IP.nip.io/realms/apigee-demo/.well-known/openid-configuration
 
 security:
   - OpenIDConnect:

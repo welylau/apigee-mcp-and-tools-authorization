@@ -1,33 +1,33 @@
-<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<APIProxy revision="2" name="Biscuit-Coffee-Shop">
-  <DisplayName/>
-  <Description>API for Biscuit Coffee Shop providing tools for ordering, menu management, loyalty programs, and operational queries.</Description>
-  <BasePaths>/biscuit-coffee</BasePaths>
-  <Policies>
-    <Policy>AM-GetPaymentMethods</Policy>
-    <Policy>AM-ListOrders</Policy>
-    <Policy>AM-GetRewardBalance</Policy>
-    <Policy>AM-SignUpLoyalty</Policy>
-    <Policy>AM-AddPaymentMethod</Policy>
-    <Policy>AM-GetOrder</Policy>
-    <Policy>AM-GetHoursOfOperation</Policy>
-    <Policy>AM-GetPaymentMethodById</Policy>
-    <Policy>AM-GetStoreLocation</Policy>
-    <Policy>AM-PlaceOrder</Policy>
-    <Policy>AM-GetMenu</Policy>
-    <Policy>AM-CancelOrder</Policy>
-    <Policy>EV-GetId</Policy>
-    <Policy>AM-ListEmployees</Policy>
-    <Policy>JS-GetFilter</Policy>
-    <Policy>JWT-VerifyToken</Policy>
-    <Policy>RF-Invalid-Scope</Policy>
-  </Policies>
-  <ProxyEndpoints>
-    <ProxyEndpoint>default</ProxyEndpoint>
-  </ProxyEndpoints>
-  <Resources>
-    <Resource>oas://openapi.yaml</Resource>
-    <Resource>jsc://getFilter.js</Resource>
-    <Resource>properties://idp-config.properties</Resource>
-  </Resources>
+<APIProxy revision="5" name="Biscuit-Coffee-Shop">
+    <DisplayName>Biscuit-Coffee-Shop</DisplayName>
+    <Description>API for Biscuit Coffee Shop providing tools for ordering, menu management, loyalty programs, and operational queries.</Description>
+    <BasePaths>/biscuit-coffee</BasePaths>
+    <Policies>
+        <Policy>AM-CancelOrder</Policy>
+        <Policy>AM-GetHoursOfOperation</Policy>
+        <Policy>AM-GetMenu</Policy>
+        <Policy>AM-GetOrder</Policy>
+        <Policy>AM-GetRewardBalance</Policy>
+        <Policy>AM-GetStoreLocation</Policy>
+        <Policy>AM-ListEmployees</Policy>
+        <Policy>AM-ListOrders</Policy>
+        <Policy>AM-PlaceOrder</Policy>
+        <Policy>AM-SetBackendHeaders</Policy>
+        <Policy>AM-SignUpLoyalty</Policy>
+        <Policy>EV-GetId</Policy>
+        <Policy>JS-GetFilter</Policy>
+        <Policy>JWT-VerifyToken</Policy>
+        <Policy>RF-Invalid-Scope</Policy>
+    </Policies>
+    <ProxyEndpoints>
+        <ProxyEndpoint>default</ProxyEndpoint>
+    </ProxyEndpoints>
+    <TargetEndpoints>
+        <TargetEndpoint>default</TargetEndpoint>
+    </TargetEndpoints>
+    <Resources>
+        <Resource>jsc://getFilter.js</Resource>
+        <Resource>oas://openapi.yaml</Resource>
+        <Resource>properties://idp-config.properties</Resource>
+    </Resources>
 </APIProxy>

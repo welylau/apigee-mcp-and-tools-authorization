@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<APIProxy revision="1" name="mcp-proxy-prod">
+<APIProxy revision="2" name="mcp-proxy-prod">
   <DisplayName>mcp-proxy-prod</DisplayName>
   <Description>Production Apigee MCP Server</Description>
   <BasePaths>/mcp</BasePaths>
@@ -9,6 +9,8 @@
     <Policy>PP-ParseMCPTools</Policy>
     <Policy>JWT-Decode</Policy>
     <Policy>VA-VerifyKey</Policy>
+    <Policy>VA-VerifyKey-Header</Policy>
+    <Policy>AM-Set200ForMCP</Policy>
   </Policies>
   <ProxyEndpoints>
     <ProxyEndpoint>default</ProxyEndpoint>

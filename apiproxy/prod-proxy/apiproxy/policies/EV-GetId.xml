@@ -5,9 +5,6 @@
   <URIPath>
     <Pattern ignoreCase="false">/orders/{orderId}</Pattern>
   </URIPath>
-  <URIPath>
-    <Pattern ignoreCase="false">/payment-methods/{paymentMethodId}</Pattern>
-  </URIPath>
   <QueryParam name="filter">
     <Pattern ignoreCase="true">{filter}</Pattern>
   </QueryParam>

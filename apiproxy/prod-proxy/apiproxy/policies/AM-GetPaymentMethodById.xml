@@ -1,9 +1,0 @@
-<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<AssignMessage name="AM-GetPaymentMethodById">
-  <Set>
-    <Payload contentType="application/json">{"id": "{paymentMethodId}", "card_number": "****-****-****-1234", "expiration": "12/27", "cvv": "***"}</Payload>
-    <StatusCode>200</StatusCode>
-  </Set>
-  <IgnoreUnresolvedVariables>true</IgnoreUnresolvedVariables>
-  <AssignTo createNew="false" transport="http" type="response"/>
-</AssignMessage>

@@ -1,9 +1,0 @@
-<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<AssignMessage name="AM-AddPaymentMethod">
-  <Set>
-    <Payload contentType="application/json">{"message": "Payment method added successfully"}</Payload>
-    <StatusCode>200</StatusCode>
-  </Set>
-  <IgnoreUnresolvedVariables>true</IgnoreUnresolvedVariables>
-  <AssignTo createNew="false" transport="http" type="response"/>
-</AssignMessage>

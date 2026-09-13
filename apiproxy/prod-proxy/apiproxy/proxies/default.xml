@@ -25,11 +25,7 @@
     <Flow name="getStoreLocation">
       <Description>Get store address location</Description>
       <Request/>
-      <Response>
-        <Step>
-          <Name>AM-GetStoreLocation</Name>
-        </Step>
-      </Response>
+      <Response/>
       <Condition>(proxy.pathsuffix MatchesPath "/location") and (request.verb = "GET")</Condition>
     </Flow>
     <Flow name="listEmployees">
@@ -40,11 +36,7 @@
           <Name>RF-Invalid-Scope</Name>
         </Step>
       </Request>
-      <Response>
-        <Step>
-          <Name>AM-ListEmployees</Name>
-        </Step>
-      </Response>
+      <Response/>
       <Condition>(proxy.pathsuffix MatchesPath "/employees") and (request.verb = "GET")</Condition>
     </Flow>
     <Flow name="signUpLoyalty">
@@ -55,96 +47,31 @@
           <Name>RF-Invalid-Scope</Name>
         </Step>
       </Request>
-      <Response>
-        <Step>
-          <Name>AM-SignUpLoyalty</Name>
-        </Step>
-      </Response>
+      <Response/>
       <Condition>(proxy.pathsuffix MatchesPath "/loyalty/signup") and (request.verb = "POST")</Condition>
     </Flow>
     <Flow name="getRewardBalance">
       <Description>Get user reward balance</Description>
       <Request/>
-      <Response>
-        <Step>
-          <Name>AM-GetRewardBalance</Name>
-        </Step>
-      </Response>
+      <Response/>
       <Condition>(proxy.pathsuffix MatchesPath "/loyalty/balance") and (request.verb = "GET")</Condition>
     </Flow>
     <Flow name="getHoursOfOperation">
       <Description>Get hours of operation</Description>
       <Request/>
-      <Response>
-        <Step>
-          <Name>AM-GetHoursOfOperation</Name>
-        </Step>
-      </Response>
+      <Response/>
       <Condition>(proxy.pathsuffix MatchesPath "/hours") and (request.verb = "GET")</Condition>
     </Flow>
     <Flow name="getMenu">
       <Description>Get coffee shop menu</Description>
       <Request/>
-      <Response>
-        <Step>
-          <Name>AM-GetMenu</Name>
-        </Step>
-      </Response>
+      <Response/>
       <Condition>(proxy.pathsuffix MatchesPath "/menu") and (request.verb = "GET")</Condition>
-    </Flow>
-    <Flow name="getPaymentMethods">
-      <Description>Retrieve saved payment methods</Description>
-      <Request>
-        <Step>
-          <Condition>!(jwt.JWT-VerifyToken.claim.scope ~~ ".*\bbiscuit_coffee_customer\b.*")</Condition>
-          <Name>RF-Invalid-Scope</Name>
-        </Step>
-      </Request>
-      <Response>
-        <Step>
-          <Name>AM-GetPaymentMethods</Name>
-        </Step>
-      </Response>
-      <Condition>(proxy.pathsuffix MatchesPath "/payment-methods") and (request.verb = "GET")</Condition>
-    </Flow>
-    <Flow name="addPaymentMethod">
-      <Description>Add a payment method</Description>
-      <Request>
-        <Step>
-          <Condition>!(jwt.JWT-VerifyToken.claim.scope ~~ ".*\bbiscuit_coffee_customer\b.*")</Condition>
-          <Name>RF-Invalid-Scope</Name>
-        </Step>
-      </Request>
-      <Response>
-        <Step>
-          <Name>AM-AddPaymentMethod</Name>
-        </Step>
-      </Response>
-      <Condition>(proxy.pathsuffix MatchesPath "/payment-methods") and (request.verb = "POST")</Condition>
-    </Flow>
-    <Flow name="getPaymentMethodById">
-      <Description>Retrieve a specific payment method by ID</Description>
-      <Request>
-        <Step>
-          <Condition>!(jwt.JWT-VerifyToken.claim.scope ~~ ".*\bbiscuit_coffee_customer\b.*")</Condition>
-          <Name>RF-Invalid-Scope</Name>
-        </Step>
-      </Request>
-      <Response>
-        <Step>
-          <Name>AM-GetPaymentMethodById</Name>
-        </Step>
-      </Response>
-      <Condition>(proxy.pathsuffix MatchesPath "/payment-methods/{id}") and (request.verb = "GET")</Condition>
     </Flow>
     <Flow name="listOrders">
       <Description>List all orders</Description>
       <Request/>
-      <Response>
-        <Step>
-          <Name>AM-ListOrders</Name>
-        </Step>
-      </Response>
+      <Response/>
       <Condition>(proxy.pathsuffix MatchesPath "/orders") and (request.verb = "GET")</Condition>
     </Flow>
     <Flow name="placeOrder">
@@ -155,31 +82,19 @@
           <Name>RF-Invalid-Scope</Name>
         </Step>
       </Request>
-      <Response>
-        <Step>
-          <Name>AM-PlaceOrder</Name>
-        </Step>
-      </Response>
+      <Response/>
       <Condition>(proxy.pathsuffix MatchesPath "/orders") and (request.verb = "POST")</Condition>
     </Flow>
     <Flow name="getOrder">
       <Description>Retrieve a specific order</Description>
       <Request/>
-      <Response>
-        <Step>
-          <Name>AM-GetOrder</Name>
-        </Step>
-      </Response>
+      <Response/>
       <Condition>(proxy.pathsuffix MatchesPath "/orders/{order_id}") and (request.verb = "GET")</Condition>
     </Flow>
     <Flow name="cancelOrder">
       <Description>Cancel an existing order</Description>
       <Request/>
-      <Response>
-        <Step>
-          <Name>AM-CancelOrder</Name>
-        </Step>
-      </Response>
+      <Response/>
       <Condition>(proxy.pathsuffix MatchesPath "/orders/{order_id}") and (request.verb = "DELETE")</Condition>
     </Flow>
   </Flows>
@@ -187,5 +102,7 @@
     <BasePath>/biscuit-coffee</BasePath>
     <Properties/>
   </HTTPProxyConnection>
-  <RouteRule name="default"/>
+  <RouteRule name="default">
+    <TargetEndpoint>default</TargetEndpoint>
+  </RouteRule>
 </ProxyEndpoint>

@@ -1,0 +1,22 @@
+{
+  "name": "apigee-coffee-shop-agent-web-ui",
+  "version": "1.0.0",
+  "description": "Artisanal Coffee Shop Web UI for Apigee & Google ADK Agent Demo",
+  "main": "index.html",
+  "scripts": {
+    "start": "python3 server.py 3000",
+    "serve": "npx serve -l 3000 .",
+    "preview": "open http://localhost:3000"
+  },
+  "keywords": [
+    "apigee",
+    "adk",
+    "agent",
+    "mcp",
+    "oauth2",
+    "keycloak",
+    "coffee-shop"
+  ],
+  "author": "Google Cloud",
+  "license": "Apache-2.0"
+}

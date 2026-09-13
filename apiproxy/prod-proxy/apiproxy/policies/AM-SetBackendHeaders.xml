@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<AssignMessage continueOnError="true" enabled="true" name="AM-SetBackendHeaders">
+  <DisplayName>AM-SetBackendHeaders</DisplayName>
+  <Set>
+    <Headers>
+      <Header name="X-User-Email">{jwt.JWT-VerifyToken.claim.email}</Header>
+      <Header name="X-User-Name">{jwt.JWT-VerifyToken.claim.name}</Header>
+      <Header name="X-User-Scope">{jwt.JWT-VerifyToken.claim.scope}</Header>
+    </Headers>
+  </Set>
+  <IgnoreUnresolvedVariables>true</IgnoreUnresolvedVariables>
+  <AssignTo createNew="false" transport="http" type="request"/>
+</AssignMessage>

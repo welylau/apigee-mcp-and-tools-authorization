@@ -18,11 +18,10 @@ fi
 echo "Setting gcloud project to $PROJECT..."
 gcloud config set project "$PROJECT"
 
-DEV_ENV="$APIGEE_DEV_ENV"
-PROD_ENV="$APIGEE_PROD_ENV"
+PROD_ENV="${APIGEE_PROD_ENV:-${APIGEE_ENV:-prod-env}}"
 
-if [ -z "$DEV_ENV" ] || [ -z "$PROD_ENV" ]; then
-  echo "ERROR: APIGEE_DEV_ENV and APIGEE_PROD_ENV must be set"
+if [ -z "$PROD_ENV" ]; then
+  echo "ERROR: APIGEE_PROD_ENV (or APIGEE_ENV) must be set"
   exit 1
 fi
 
@@ -69,11 +68,6 @@ echo "Replacing Placeholders in Agents & Proxies"
 echo "================================================="
 
 # 1. Replace hostnames and local agent python files
-if [ -f "./biscuit-coffee/python/agents/coffee_agent_dev/tools.py" ]; then
-  echo "Replacing dev hostname in coffee_agent_dev/tools.py..."
-  sed "${sedi_args[@]}" "s|@APIGEE_DEV_HOSTNAME@|$APIGEE_DEV_HOSTNAME|g" ./biscuit-coffee/python/agents/coffee_agent_dev/tools.py
-fi
-
 if [ -f "./biscuit-coffee/python/agents/coffee_agent_prod/tools.py" ]; then
   echo "Replacing prod hostname in coffee_agent_prod/tools.py..."
   sed "${sedi_args[@]}" "s|@APIGEE_PROD_HOSTNAME@|$APIGEE_PROD_HOSTNAME|g" ./biscuit-coffee/python/agents/coffee_agent_prod/tools.py
@@ -83,21 +77,14 @@ fi
 TMP_DIR=$(mktemp -d)
 echo "Staging proxy bundles in temporary directory: $TMP_DIR"
 
-mkdir -p "$TMP_DIR/dev-proxy"
-cp -r ./apiproxy/dev-proxy/apiproxy "$TMP_DIR/dev-proxy/"
-
 mkdir -p "$TMP_DIR/prod-proxy"
 cp -r ./apiproxy/prod-proxy/apiproxy "$TMP_DIR/prod-proxy/"
-
-mkdir -p "$TMP_DIR/mcp-proxy-dev"
-cp -r ./apiproxy/mcp-proxy-dev/apiproxy "$TMP_DIR/mcp-proxy-dev/"
 
 mkdir -p "$TMP_DIR/mcp-proxy-prod"
 cp -r ./apiproxy/mcp-proxy-prod/apiproxy "$TMP_DIR/mcp-proxy-prod/"
 
 # Replace placeholders in temp copies
 echo "Performing replacements on proxy files..."
-find "$TMP_DIR" -type f -exec sed "${sedi_args[@]}" "s|@APIGEE_DEV_HOSTNAME@|$APIGEE_DEV_HOSTNAME|g" {} +
 find "$TMP_DIR" -type f -exec sed "${sedi_args[@]}" "s|@APIGEE_PROD_HOSTNAME@|$APIGEE_PROD_HOSTNAME|g" {} +
 find "$TMP_DIR" -type f -exec sed "${sedi_args[@]}" "s|@GCP_PROJECT_ID@|$PROJECT|g" {} +
 
@@ -107,22 +94,14 @@ echo "================================================="
 
 # 1. Deploy REST API Proxies
 if [ "$DEPLOY_REST" = true ]; then
-  echo "Deploying Biscuit-Coffee-Shop API proxy (revision 1) to dev..."
-  apigeecli apis create bundle -n Biscuit-Coffee-Shop -f "$TMP_DIR/dev-proxy/apiproxy" --org "$PROJECT" --token "$TOKEN"
-  apigeecli apis deploy --name Biscuit-Coffee-Shop --org "$PROJECT" --env "$DEV_ENV" --ovr --wait --token "$TOKEN"
-
-  echo "Deploying Biscuit-Coffee-Shop API proxy (revision 2) to prod..."
+  echo "Deploying Biscuit-Coffee-Shop API proxy to $PROD_ENV..."
   apigeecli apis create bundle -n Biscuit-Coffee-Shop -f "$TMP_DIR/prod-proxy/apiproxy" --org "$PROJECT" --token "$TOKEN"
-  apigeecli apis deploy --name Biscuit-Coffee-Shop --org "$PROJECT" --env "$PROD_ENV" --ovr --wait --token "$TOKEN"
+  apigeecli apis deploy --name Biscuit-Coffee-Shop --org "$PROJECT" --env "$PROD_ENV" -s "sa-apigee-aiservices@${PROJECT}.iam.gserviceaccount.com" --ovr --wait --token "$TOKEN"
 fi
 
 # 2. Deploy MCP Discovery Proxies (if enabled)
 if [ "$DEPLOY_MCP" = true ]; then
-  echo "Deploying Dev MCP Discovery Proxy..."
-  apigeecli apis create bundle -n mcp-proxy-dev -f "$TMP_DIR/mcp-proxy-dev/apiproxy" --org "$PROJECT" --token "$TOKEN"
-  apigeecli apis deploy --name mcp-proxy-dev --org "$PROJECT" --env "$DEV_ENV" --ovr --wait --token "$TOKEN"
-
-  echo "Deploying Prod MCP Discovery Proxy..."
+  echo "Deploying Prod MCP Discovery Proxy to $PROD_ENV..."
   apigeecli apis create bundle -n mcp-proxy-prod -f "$TMP_DIR/mcp-proxy-prod/apiproxy" --org "$PROJECT" --token "$TOKEN"
   apigeecli apis deploy --name mcp-proxy-prod --org "$PROJECT" --env "$PROD_ENV" --ovr --wait --token "$TOKEN"
 fi
@@ -250,7 +229,7 @@ if [ "$DEPLOY_PRODUCTS" = true ]; then
     apigeecli apps keys create --org "$PROJECT" --token "$TOKEN" \
       --name "biscuit-coffee-agent-app" \
       --key "biscuit-coffee-agent" \
-      --secret "oHHeazVDRvTK6aHFMop8cTWgx0MzWFvR" \
+      --secret "YOUR_KEYCLOAK_CLIENT_SECRET" \
       --dev "agent-developer@biscuit-coffee.com" \
       --prods "biscuit-coffee-agent"
   else

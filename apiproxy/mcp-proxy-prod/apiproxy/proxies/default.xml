@@ -10,12 +10,18 @@
       </Step>
       <Step>
         <Name>JWT-Decode</Name>
+        <Condition>request.header.Authorization != null</Condition>
       </Step>
       <Step>
         <Name>PP-ParseMCPTools</Name>
       </Step>
       <Step>
         <Name>VA-VerifyKey</Name>
+        <Condition>request.header.Authorization != null</Condition>
+      </Step>
+      <Step>
+        <Name>VA-VerifyKey-Header</Name>
+        <Condition>request.header.Authorization == null</Condition>
       </Step>
     </Request>
     <Response/>

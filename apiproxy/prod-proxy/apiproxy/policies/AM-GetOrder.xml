@@ -6,7 +6,6 @@
     "email": "{jwt.JWT-VerifyToken.claim.email:customer@example.com}",
     "name": "{jwt.JWT-VerifyToken.claim.name:David}",
     "loyalty_id": "{loyalty_id:L-12345}",
-    "payment_method_id": "pm-456",
     "items":
     [
         {

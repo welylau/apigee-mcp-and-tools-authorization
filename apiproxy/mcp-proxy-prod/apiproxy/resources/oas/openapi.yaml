@@ -21,9 +21,6 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/EmployeeListResponse'
                     description: A list of coffee shop employees
-            security:
-                - OpenIDConnect:
-                    - biscuit_coffee_manager
             summary: List all coffee shop employees
     /biscuit-coffee/hours:
         get:
@@ -170,10 +167,7 @@ paths:
                                 name:
                                     description: The user's name (provide either email or name).
                                     type: string
-                                payment_method_id:
-                                    type: string
                             required:
-                                - payment_method_id
                                 - items
                             type: object
                 required: true
@@ -233,126 +227,9 @@ paths:
                                 $ref: '#/components/schemas/OrderDetails'
                     description: The complete details of the order
             summary: Retrieve a specific order
-    /biscuit-coffee/payment-methods:
-        get:
-            description: Retrieve saved payment methods
-            operationId: getPaymentMethods
-            parameters:
-                - description: The user's email address.
-                  in: query
-                  name: email
-                  required: true
-                  schema:
-                    format: email
-                    type: string
-            responses:
-                "200":
-                    content:
-                        application/json:
-                            schema:
-                                $ref: '#/components/schemas/PaymentMethodsResponse'
-                    description: A list of payment methods
-            security:
-                - OpenIDConnect:
-                    - biscuit_coffee_customer
-            summary: Retrieve saved payment methods
-        post:
-            description: Add a payment method
-            operationId: addPaymentMethod
-            requestBody:
-                content:
-                    application/json:
-                        schema:
-                            properties:
-                                email:
-                                    description: The user's email address.
-                                    format: email
-                                    type: string
-                                payment_details:
-                                    properties:
-                                        card_number:
-                                            description: The full credit card number.
-                                            type: string
-                                        cvv:
-                                            description: Security code from the back of the card.
-                                            type: string
-                                        expiration:
-                                            description: Expiration date in MM/YY format.
-                                            example: 12/27
-                                            type: string
-                                        id:
-                                            example: pm-456
-                                            type: string
-                                    required:
-                                        - id
-                                        - card_number
-                                        - expiration
-                                        - cvv
-                                    type: object
-                            required:
-                                - email
-                                - payment_details
-                            type: object
-                required: true
-            responses:
-                "200":
-                    content:
-                        application/json:
-                            schema:
-                                properties:
-                                    message:
-                                        type: string
-                                required:
-                                    - message
-                                type: object
-                    description: Success confirmation
-            security:
-                - OpenIDConnect:
-                    - biscuit_coffee_customer
-            summary: Add a payment method
-    /biscuit-coffee/payment-methods/{id}:
-        get:
-            description: Retrieve a specific payment method by ID
-            operationId: getPaymentMethodById
-            parameters:
-                - description: The unique identifier of the payment method.
-                  in: path
-                  name: id
-                  required: true
-                  schema:
-                    type: string
-            responses:
-                "200":
-                    content:
-                        application/json:
-                            schema:
-                                $ref: '#/components/schemas/PaymentMethodDetails'
-                    description: The details of the payment method
-            security:
-                - OpenIDConnect:
-                    - biscuit_coffee_customer
-            summary: Retrieve a specific payment method by ID
+    
 components:
     schemas:
-        AddPaymentMethodRequest:
-            properties:
-                email:
-                    description: The user's email address.
-                    format: email
-                    type: string
-                payment_details:
-                    $ref: '#/components/schemas/PaymentMethodDetails'
-            required:
-                - email
-                - payment_details
-            type: object
-        AddPaymentMethodResponse:
-            properties:
-                message:
-                    type: string
-            required:
-                - message
-            type: object
         CancelOrderResponse:
             properties:
                 message:
@@ -451,8 +328,6 @@ components:
                     type: string
                 order_id:
                     type: string
-                payment_method_id:
-                    type: string
                 status:
                     type: string
                 total_amount:
@@ -462,7 +337,6 @@ components:
             required:
                 - order_id
                 - email
-                - payment_method_id
                 - items
                 - status
                 - total_amount
@@ -481,31 +355,6 @@ components:
             items:
                 $ref: '#/components/schemas/OrderDetails'
             type: array
-        PaymentMethodDetails:
-            properties:
-                card_number:
-                    description: The full credit card number.
-                    type: string
-                cvv:
-                    description: Security code from the back of the card.
-                    type: string
-                expiration:
-                    description: Expiration date in MM/YY format.
-                    example: 12/27
-                    type: string
-                id:
-                    example: pm-456
-                    type: string
-            required:
-                - id
-                - card_number
-                - expiration
-                - cvv
-            type: object
-        PaymentMethodsResponse:
-            items:
-                $ref: '#/components/schemas/PaymentMethodDetails'
-            type: array
         PlaceOrderRequest:
             properties:
                 email:
@@ -519,10 +368,7 @@ components:
                 name:
                     description: The user's name (provide either email or name).
                     type: string
-                payment_method_id:
-                    type: string
             required:
-                - payment_method_id
                 - items
             type: object
         PlaceOrderResponse:
@@ -568,5 +414,5 @@ components:
             type: object
     securitySchemes:
         OpenIDConnect:
-            openIdConnectUrl: https://34.160.173.66.nip.io/realms/apigee-demo/.well-known/openid-configuration
+            openIdConnectUrl: https://keycloak.YOUR_KEYCLOAK_IP.nip.io/realms/apigee-demo/.well-known/openid-configuration
             type: openIdConnect

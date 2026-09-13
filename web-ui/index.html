@@ -1,0 +1,519 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Biscuit Coffee — Apigee X & Google Cloud ADK AI Agent</title>
+  
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  
+  <!-- Favicon -->
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>☕</text></svg>">
+  
+  <!-- Instant OAuth Popup Callback Interceptor -->
+  <script>
+    (function() {
+      try {
+        var searchParams = new URLSearchParams(window.location.search);
+        var hashParams = new URLSearchParams(window.location.hash ? window.location.hash.substring(1) : '');
+        var code = searchParams.get('code') || hashParams.get('code');
+        if (window.opener && code) {
+          window.opener.postMessage({
+            type: 'KEYCLOAK_OAUTH_CALLBACK',
+            authResponseUrl: window.location.href,
+            code: code,
+            state: searchParams.get('state') || hashParams.get('state')
+          }, '*');
+          window.close();
+        } else if (window.opener && (searchParams.has('logged_out') || searchParams.get('state') === 'logout')) {
+          window.opener.postMessage({ type: 'KEYCLOAK_LOGOUT_CALLBACK' }, '*');
+          window.close();
+        }
+      } catch (e) {
+        console.warn('OAuth popup interceptor:', e);
+      }
+    })();
+  </script>
+
+  <!-- Stylesheet -->
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div class="app-container">
+    <!-- TOP HEADER -->
+    <header class="app-header">
+      <div class="brand-section">
+        <!-- Google Cloud Platform + Apigee X Logos -->
+        <div class="cloud-logos-wrapper">
+          <!-- Official Google Cloud Logo (Uploaded Google Cloud image) -->
+          <div class="logo-item" title="Google Cloud Platform">
+            <img src="assets/google-cloud.png" alt="Google Cloud" class="gcp-logo-img">
+            <span class="gcp-name">Google Cloud</span>
+          </div>
+
+          <div class="brand-divider"></div>
+
+          <!-- Official Apigee API Management Platform SVG Logo -->
+          <div class="logo-item apigee-brand" title="Apigee API Management Platform">
+            <svg class="apigee-svg" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 81 82" width="24" height="24" fill="#fff" fill-rule="evenodd" stroke="#000" stroke-linecap="round" stroke-linejoin="round">
+              <use xlink:href="#ApigeeLogoMark" x=".5" y=".5"/>
+              <symbol id="ApigeeLogoMark" overflow="visible">
+                <g stroke="none">
+                  <path d="M13.042 40l5.233-5.233-7.096-7.096c-3.281-3.341-4.244-8.32-2.446-12.644s6.009-7.15 10.692-7.178c3.08-.001 6.033 1.226 8.206 3.409l7.136 7.096L40 13.042l-7.096-7.096A19.07 19.07 0 0 0 14.296.608 19.07 19.07 0 0 0 .608 14.296a19.07 19.07 0 0 0 5.338 18.608zm53.916 0l-5.233 5.233 7.096 7.136a11.66 11.66 0 0 1-16.492 16.452l-7.096-7.096L40 66.958l7.096 7.096a19.07 19.07 0 1 0 26.958-26.958z" fill="#669df6"/>
+                  <path d="M27.671 68.821c-4.554 4.554-11.938 4.554-16.492 0s-4.554-11.938 0-16.492l7.096-7.096 16.492 16.492zm24.698-57.642c3.327-3.321 8.328-4.31 12.668-2.504s7.164 6.049 7.154 10.75c-.023 3.087-1.246 6.044-3.409 8.246l-7.096 7.096-16.452-16.492zM40 52.646A12.69 12.69 0 0 1 27.354 40h0A12.73 12.73 0 0 1 40 27.354h0A12.73 12.73 0 0 1 52.646 40h0A12.69 12.69 0 0 1 40 52.646zM66.958 40l7.096-7.096A19.07 19.07 0 0 0 65.704.608a19.07 19.07 0 0 0-18.608 5.338L40 13.042 13.042 40l-7.096 7.096A19.07 19.07 0 0 0 .608 65.704a19.07 19.07 0 0 0 32.296 8.35L40 66.958z" fill="#4285f4"/>
+                </g>
+              </symbol>
+            </svg>
+            <span class="apigee-name">Apigee <strong class="x-accent">X</strong></span>
+          </div>
+        </div>
+
+        <div class="brand-divider"></div>
+
+        <div class="brand-title-area">
+          <div class="brand-title">
+            <span>Biscuit Coffee Assistant</span>
+            <span class="brand-badge">Google ADK</span>
+          </div>
+          <span class="brand-subtitle">AI Agent Gateway & Tool Authorization Showcase</span>
+        </div>
+      </div>
+
+      <!-- Architecture tags & Quick info -->
+      <div class="arch-tags">
+        <div class="arch-pill" id="archInfoBtn" title="Click to view Apigee OAuth architecture">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+            <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+          </svg>
+          <span>Apigee MCP Security</span>
+        </div>
+        <div class="arch-pill">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
+          </svg>
+          <span>Keycloak OAuth 2.0</span>
+        </div>
+      </div>
+
+      <!-- Status, Header Auth & Theme -->
+      <div class="header-actions">
+        <button type="button" class="header-clear-btn" id="headerClearChatBtn" title="Clear all the chat messages">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="3 6 5 6 21 6"></polyline>
+            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+          </svg>
+          <span>Clear all the chat</span>
+        </button>
+
+        <button type="button" class="theme-toggle-btn" id="themeToggleBtn" title="Toggle Light / Dark mode">
+          <svg id="themeIconSun" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="5"></circle>
+            <line x1="12" y1="1" x2="12" y2="3"></line>
+            <line x1="12" y1="21" x2="12" y2="23"></line>
+            <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+            <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+            <line x1="1" y1="12" x2="3" y2="12"></line>
+            <line x1="21" y1="12" x2="23" y2="12"></line>
+            <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+            <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+          </svg>
+          <svg id="themeIconMoon" style="display: none;" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
+          </svg>
+        </button>
+      </div>
+    </header>
+
+    <!-- MAIN 2-COLUMN LAYOUT -->
+    <main class="main-layout">
+      <!-- LEFT SIDEBAR: Role Capabilities & Governance -->
+      <aside class="sidebar-panel">
+        <div class="section-header">
+          <div class="section-title">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+              <circle cx="12" cy="7" r="4"></circle>
+            </svg>
+            <span>Active Persona</span>
+          </div>
+        </div>
+
+        <!-- Current Persona Card (Dynamic on Authentication) -->
+        <div class="current-persona-card unauthenticated" id="personaCard">
+          <div class="persona-header">
+            <div class="persona-avatar" id="personaAvatar">🔒</div>
+            <div class="persona-info">
+              <div class="persona-name" id="personaName">Not Logged In</div>
+              <div class="persona-email" id="personaEmail">No active Keycloak session</div>
+              <div class="persona-scope-tag" id="personaScopeTag">🔑 Scopes: None (Unauthenticated)</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Auth Status & Controls (Below Active Persona Section) -->
+        <div class="persona-auth-container" id="personaAuthContainer">
+          <div class="sidebar-auth-row">
+            <div class="auth-status-pill unauthenticated" id="personaAuthStatusPill">
+              <span class="auth-dot offline" id="personaAuthDot"></span>
+              <span class="auth-label" id="personaAuthLabel">Not Logged In</span>
+            </div>
+          </div>
+          <button type="button" class="btn-persona-auth login" id="personaAuthBtn">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
+            <span id="personaAuthBtnText">Login</span>
+          </button>
+        </div>
+
+        <!-- Capability Comparison: Customer vs Store Manager -->
+        <div class="section-header" style="margin-top: 4px;">
+          <div class="section-title">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon>
+            </svg>
+            <span>Role Permissions & Policies</span>
+          </div>
+        </div>
+
+        <div class="role-cards-container">
+          <!-- PUBLIC (UNAUTHENTICATED) SPEC CARD -->
+          <div class="role-spec-box" id="publicSpecBox">
+            <div class="spec-title-row">
+              <div class="spec-role-label public">
+                <span>🌐</span>
+                <span>Public (Unauthenticated)</span>
+              </div>
+              <span class="spec-badge">public_access</span>
+            </div>
+
+            <div class="action-list">
+              <!-- Public Permissions -->
+              <div class="action-item">
+                <svg class="action-icon allowed" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                  <polyline points="20 6 9 17 4 12"></polyline>
+                </svg>
+                <div class="action-text">
+                  <strong>Menu, Hours & Location</strong> <span class="tag">GET /menu</span> <span class="tag">GET /location</span> <span class="tag">GET /hours</span>
+                </div>
+              </div>
+
+              <div class="action-item">
+                <svg class="action-icon blocked" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                  <line x1="18" y1="6" x2="6" y2="18"></line>
+                  <line x1="6" y1="6" x2="18" y2="18"></line>
+                </svg>
+                <div class="action-text blocked-desc">
+                  <strong>Orders & Rewards</strong> <span class="tag" style="color: var(--danger)">401 Login Required</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Suggested Prompts for Public -->
+            <div class="spec-prompts-section">
+              <div class="spec-prompts-label">Suggested Prompts</div>
+              <div class="spec-prompts-list" id="publicPromptsContainer">
+                <!-- Rendered dynamically -->
+              </div>
+            </div>
+          </div>
+
+          <!-- CUSTOMER SPEC CARD -->
+          <div class="role-spec-box" id="customerSpecBox">
+            <div class="spec-title-row">
+              <div class="spec-role-label customer">
+                <span>👤</span>
+                <span>Customer</span>
+              </div>
+              <span class="spec-badge">biscuit_coffee_customer</span>
+            </div>
+
+            <div class="action-list">
+              <!-- Customer Permissions -->
+              <div class="action-item">
+                <svg class="action-icon allowed" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                  <polyline points="20 6 9 17 4 12"></polyline>
+                </svg>
+                <div class="action-text">
+                  <strong>Menu & Store Info</strong> <span class="tag">GET /menu</span> <span class="tag">GET /hours</span>
+                </div>
+              </div>
+
+              <div class="action-item">
+                <svg class="action-icon allowed" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                  <polyline points="20 6 9 17 4 12"></polyline>
+                </svg>
+                <div class="action-text">
+                  <strong>Rewards & Orders</strong> <span class="tag">GET /rewards</span> <span class="tag">POST /orders</span>
+                </div>
+              </div>
+
+              <div class="action-item">
+                <svg class="action-icon blocked" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                  <line x1="18" y1="6" x2="6" y2="18"></line>
+                  <line x1="6" y1="6" x2="18" y2="18"></line>
+                </svg>
+                <div class="action-text blocked-desc">
+                  <strong>Staff Directory</strong> <span class="tag" style="color: var(--danger)">403 Forbidden</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Suggested Prompts for Customer -->
+            <div class="spec-prompts-section">
+              <div class="spec-prompts-label">Suggested Prompts</div>
+              <div class="spec-prompts-list" id="customerPromptsContainer">
+                <!-- Rendered dynamically -->
+              </div>
+            </div>
+          </div>
+
+          <!-- STORE MANAGER SPEC CARD -->
+          <div class="role-spec-box" id="managerSpecBox">
+            <div class="spec-title-row">
+              <div class="spec-role-label manager">
+                <span>👔</span>
+                <span>Store Manager</span>
+              </div>
+              <span class="spec-badge">+ biscuit_coffee_manager</span>
+            </div>
+
+            <div class="action-list">
+              <!-- Store Manager Permissions -->
+              <div class="action-item">
+                <svg class="action-icon allowed" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                  <polyline points="20 6 9 17 4 12"></polyline>
+                </svg>
+                <div class="action-text">
+                  <strong>All Customer Permissions</strong> (Menu, Rewards, Orders)
+                </div>
+              </div>
+
+              <div class="action-item">
+                <svg class="action-icon allowed" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                  <polyline points="20 6 9 17 4 12"></polyline>
+                </svg>
+                <div class="action-text">
+                  <strong>Employee Directory Access</strong> <span class="tag" style="color: var(--success)">200 OK</span>
+                </div>
+              </div>
+
+              <div class="action-item">
+                <svg class="action-icon blocked" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                  <line x1="18" y1="6" x2="6" y2="18"></line>
+                  <line x1="6" y1="6" x2="18" y2="18"></line>
+                </svg>
+                <div class="action-text blocked-desc">
+                  <strong>Gateway Policies Blocked</strong> (Admin config locked)
+                </div>
+              </div>
+            </div>
+
+            <!-- Suggested Prompts for Store Manager -->
+            <div class="spec-prompts-section">
+              <div class="spec-prompts-label">Suggested Prompts</div>
+              <div class="spec-prompts-list" id="managerPromptsContainer">
+                <!-- Rendered dynamically -->
+              </div>
+            </div>
+          </div>
+        </div>
+
+
+        <!-- Architecture Diagram Card (Bottom Left Section) -->
+        <div class="sidebar-arch-card" id="sidebarArchCard">
+          <div class="sidebar-arch-header">
+            <div class="sidebar-arch-logo">
+              <svg class="arch-logo-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="2" y="3" width="6" height="5" rx="1"></rect>
+                <rect x="16" y="3" width="6" height="5" rx="1"></rect>
+                <rect x="9" y="16" width="6" height="5" rx="1"></rect>
+                <path d="M5 8v3a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8"></path>
+                <path d="M12 13v3"></path>
+              </svg>
+            </div>
+            <div class="sidebar-arch-title-group">
+              <span class="sidebar-arch-title">Demo Architecture</span>
+              <span class="sidebar-arch-badge">Apigee + Keycloak</span>
+            </div>
+          </div>
+          <p class="sidebar-arch-desc">
+            Visual overview of how 3-legged OAuth, Keycloak JWTs, Google ADK (Gemini), and Apigee X API Gateway interact to enforce role-based access.
+          </p>
+          <button type="button" class="btn-sidebar-arch" id="sidebarArchBtn">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+              <circle cx="11" cy="11" r="8"></circle>
+              <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+              <line x1="11" y1="8" x2="11" y2="14"></line>
+              <line x1="8" y1="11" x2="14" y2="11"></line>
+            </svg>
+            <span>View Architecture Diagram</span>
+          </button>
+        </div>
+      </aside>
+
+      <!-- HORIZONTAL RESIZER -->
+      <div class="sidebar-resizer" id="sidebarResizer" title="Drag horizontally to resize panel (Double-click to reset)">
+        <div class="resizer-handle-pill"></div>
+      </div>
+
+      <!-- RIGHT CONTAINER: Interactive Agent Chat & UI -->
+      <section class="chat-container">
+        <!-- IFRAME OVERLAY FOR NATIVE ADK DEV-UI EMBED -->
+        <div class="iframe-container" id="iframeContainer">
+          <iframe class="adk-iframe" id="adkIframe" src="http://localhost:8000/dev-ui"></iframe>
+        </div>
+
+        <!-- MAIN CHAT LAYOUT -->
+        <div id="chatLayoutArea" style="display: flex; flex-direction: column; height: 100%; width: 100%;">
+          <!-- TOOLBAR -->
+          <div class="chat-toolbar">
+            <div class="agent-identity">
+              <div class="agent-avatar">☕</div>
+              <div class="agent-meta">
+                <div class="agent-name">
+                  <span>biscuit_coffee_agent</span>
+                  <span class="brand-badge">Google ADK</span>
+                </div>
+                <div class="agent-status-label">Model: gemini-2.5-flash • Apigee MCP Gateway Enabled</div>
+              </div>
+            </div>
+
+            <div class="toolbar-controls">
+              <button type="button" class="tool-icon-btn" id="clearChatBtn" title="Clear chat history">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <polyline points="3 6 5 6 21 6"></polyline>
+                  <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                </svg>
+              </button>
+            </div>
+          </div>
+
+          <!-- MESSAGES SCROLL AREA -->
+          <div class="messages-area" id="messagesArea">
+            <!-- Rendered dynamically by app.js -->
+          </div>
+
+          <!-- CHAT INPUT BAR -->
+          <div class="chat-input-container">
+            <form class="chat-form" id="chatForm">
+              <div class="input-box-wrapper">
+                <input 
+                  type="text" 
+                  class="chat-input" 
+                  id="chatInput" 
+                  placeholder="Ask Biscuit Coffee Agent (e.g., 'What's on the menu?', 'List employees', 'Place order')..." 
+                  autocomplete="off"
+                />
+                <button type="submit" class="send-btn" id="sendBtn" title="Send message">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <line x1="22" y1="2" x2="11" y2="13"></line>
+                    <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+                  </svg>
+                </button>
+              </div>
+            </form>
+            <div class="input-footer">
+              <div class="scope-reminder">
+                <span id="scopeFooterText">Active Scope: biscuit_coffee_customer • Apigee Proxy Auth</span>
+              </div>
+              <div>Press Enter to send</div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- ARCHITECTURE MODAL -->
+  <div class="modal-overlay" id="archModal">
+    <div class="modal-card arch-modal-large" id="archModalCard">
+      <div class="modal-header">
+        <div class="modal-title">
+          <img src="assets/google-cloud.png" alt="Google Cloud" style="height: 22px; width: auto; vertical-align: middle;">
+          <span>Apigee X + Keycloak + ADK Architecture</span>
+          <span class="modal-subtitle-badge">Zero-Trust Tool Governance</span>
+        </div>
+        <div class="modal-header-actions">
+          <button type="button" class="modal-control-btn" id="minModalBtn" title="Minimize pop-up">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4">
+              <line x1="5" y1="12" x2="19" y2="12"></line>
+            </svg>
+          </button>
+          <button type="button" class="modal-control-btn close" id="closeModalBtn" title="Close pop-up">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4">
+              <line x1="18" y1="6" x2="6" y2="18"></line>
+              <line x1="6" y1="6" x2="18" y2="18"></line>
+            </svg>
+          </button>
+        </div>
+      </div>
+      <div class="modal-body arch-modal-body">
+        <!-- Diagram Container -->
+        <div class="arch-diagram-canvas">
+          <img src="assets/architecture_diagram.png" alt="Apigee & Keycloak AI Agent Architecture Diagram" class="arch-diagram-large-img" id="archDiagramImg">
+        </div>
+
+        <!-- Request Flow Summary Pills -->
+        <div class="arch-flow-summary-grid">
+          <div class="arch-flow-card">
+            <div class="flow-card-badge blue">Step 1</div>
+            <div class="flow-card-title">3 User Tiers & UI</div>
+            <div class="flow-card-text"><strong>Public:</strong> anonymous chat. <strong>Customer & Store Manager:</strong> authenticate with Keycloak via 3-legged OAuth popup.</div>
+          </div>
+          <div class="arch-flow-card">
+            <div class="flow-card-badge blue">Step 2</div>
+            <div class="flow-card-title">Keycloak OAuth 2.0</div>
+            <div class="flow-card-text">Issues signed JWT tokens with role claims (<code>biscuit_coffee_customer</code> or <code>biscuit_coffee_manager</code>).</div>
+          </div>
+          <div class="arch-flow-card">
+            <div class="flow-card-badge blue">Step 3</div>
+            <div class="flow-card-title">Google ADK Agent</div>
+            <div class="flow-card-text">Gemini plans tool calls and invokes Apigee MCP Tools, passing user Bearer JWT or anonymous headers.</div>
+          </div>
+          <div class="arch-flow-card">
+            <div class="flow-card-badge orange">Step 4</div>
+            <div class="flow-card-title">Apigee Proxies & Gating</div>
+            <div class="flow-card-text"><strong>MCP Proxy (/mcp):</strong> Transcoding &amp; ParsePayload (<code>PP-ParseMCPTools</code>).<br><strong>Biscuit-Coffee Proxy:</strong> <code>JWT-VerifyToken</code> &amp; Scope checks (Allow <code>200</code>, Reject <code>401</code>/<code>403</code>).</div>
+          </div>
+          <div class="arch-flow-card">
+            <div class="flow-card-badge green">Step 5</div>
+            <div class="flow-card-title">Cloud Run Backend</div>
+            <div class="flow-card-text">Delivers backend business responses for menu, loyalty balance, coffee orders, and staff directory.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- MINIMIZED ARCHITECTURE DOCK (Floating Bottom-Left) -->
+  <div class="arch-minimized-dock" id="archMinimizedDock" style="display: none;">
+    <div class="dock-left-content" id="restoreArchModalBtn" title="Click to expand architecture diagram">
+      <div class="dock-logo-badge">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="2" y="3" width="6" height="5" rx="1"></rect>
+          <rect x="16" y="3" width="6" height="5" rx="1"></rect>
+          <rect x="9" y="16" width="6" height="5" rx="1"></rect>
+          <path d="M5 8v3a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8"></path>
+          <path d="M12 13v3"></path>
+        </svg>
+      </div>
+      <div class="dock-text-group">
+        <span class="dock-title">Architecture Diagram</span>
+        <span class="dock-subtext">Minimized • Click to expand</span>
+      </div>
+    </div>
+    <button type="button" class="dock-close-btn" id="closeArchDockBtn" title="Dismiss">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+        <line x1="18" y1="6" x2="6" y2="18"></line>
+        <line x1="6" y1="6" x2="18" y2="18"></line>
+      </svg>
+    </button>
+  </div>
+
+  <!-- Scripts -->
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
