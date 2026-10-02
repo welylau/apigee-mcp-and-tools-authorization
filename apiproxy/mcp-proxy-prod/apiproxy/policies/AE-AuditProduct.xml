@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!--
+  AUDIT LOGGING - loads the API Product matched by VerifyAPIKey so its custom
+  attributes (and per-operation attributes, e.g. maxOrderAmount) can be logged.
+  Rejection path only; continueOnError=true.
+-->
+<AccessEntity continueOnError="true" enabled="true" name="AE-AuditProduct">
+  <DisplayName>AE-AuditProduct</DisplayName>
+  <EntityType value="apiproduct"/>
+  <EntityIdentifier ref="audit.product" type="apiproductname"/>
+  <OutputFormat>JSON</OutputFormat>
+</AccessEntity>

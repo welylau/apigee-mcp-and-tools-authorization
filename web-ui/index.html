@@ -11,7 +11,7 @@
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   
   <!-- Favicon -->
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>☕</text></svg>">
+  <link rel="icon" type="image/svg+xml" href="https://www.gstatic.com/bricks/image/b45728f17bf88494b25d78a9fb27ae538e6eb4a06a972f6502b7410ff714532d.svg">
   
   <!-- Instant OAuth Popup Callback Interceptor -->
   <script>
@@ -40,6 +40,8 @@
 
   <!-- Stylesheet -->
   <link rel="stylesheet" href="css/style.css">
+  <link rel="stylesheet" href="css/settings.css">
+  <link rel="stylesheet" href="css/tour.css">
 </head>
 <body>
   <div class="app-container">
@@ -101,6 +103,14 @@
 
       <!-- Status, Header Auth & Theme -->
       <div class="header-actions">
+        <button type="button" class="header-tour-btn" id="headerTourBtn" title="Open the interactive Guided Tour">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"></polygon>
+            <line x1="8" y1="2" x2="8" y2="18"></line>
+            <line x1="16" y1="6" x2="16" y2="22"></line>
+          </svg>
+          <span>Guided Tour</span>
+        </button>
         <button type="button" class="header-clear-btn" id="headerClearChatBtn" title="Clear all the chat messages">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <polyline points="3 6 5 6 21 6"></polyline>
@@ -124,6 +134,14 @@
           <svg id="themeIconMoon" style="display: none;" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
           </svg>
+        </button>
+
+        <button type="button" class="settings-open-btn" id="settingsOpenBtn" title="Settings: hosting info &amp; consumer audit logs" aria-haspopup="dialog" aria-controls="settingsDrawer" aria-expanded="false">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="3"></circle>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+          </svg>
+          <span>Settings</span>
         </button>
       </div>
     </header>
@@ -220,12 +238,15 @@
             </div>
           </div>
 
-          <!-- CUSTOMER SPEC CARD -->
+          <!-- CUSTOMER SPEC CARD (John Smith) -->
           <div class="role-spec-box" id="customerSpecBox">
             <div class="spec-title-row">
               <div class="spec-role-label customer">
                 <span>👤</span>
-                <span>Customer</span>
+                <div class="spec-role-titles">
+                  <span class="spec-role-name">Customer (John Smith)</span>
+                  <span class="spec-role-email">customer@biscuit-coffee.com</span>
+                </div>
               </div>
               <span class="spec-badge">biscuit_coffee_customer</span>
             </div>
@@ -261,10 +282,63 @@
               </div>
             </div>
 
-            <!-- Suggested Prompts for Customer -->
+            <!-- Suggested Prompts for Customer (John Smith) -->
             <div class="spec-prompts-section">
               <div class="spec-prompts-label">Suggested Prompts</div>
               <div class="spec-prompts-list" id="customerPromptsContainer">
+                <!-- Rendered dynamically -->
+              </div>
+            </div>
+          </div>
+
+          <!-- CUSTOMER 2 SPEC CARD (Michael Bosh) -->
+          <div class="role-spec-box" id="customer2SpecBox">
+            <div class="spec-title-row">
+              <div class="spec-role-label customer">
+                <span>👤</span>
+                <div class="spec-role-titles">
+                  <span class="spec-role-name">Customer (Michael Bosh)</span>
+                  <span class="spec-role-email">customer2@biscuit-coffee.com</span>
+                </div>
+              </div>
+              <span class="spec-badge">biscuit_coffee_customer</span>
+            </div>
+
+            <div class="action-list">
+              <!-- Customer Permissions -->
+              <div class="action-item">
+                <svg class="action-icon allowed" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                  <polyline points="20 6 9 17 4 12"></polyline>
+                </svg>
+                <div class="action-text">
+                  <strong>Menu & Store Info</strong> <span class="tag">GET /menu</span> <span class="tag">GET /hours</span>
+                </div>
+              </div>
+
+              <div class="action-item">
+                <svg class="action-icon allowed" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                  <polyline points="20 6 9 17 4 12"></polyline>
+                </svg>
+                <div class="action-text">
+                  <strong>Rewards & Orders</strong> <span class="tag">GET /rewards</span> <span class="tag">POST /orders</span>
+                </div>
+              </div>
+
+              <div class="action-item">
+                <svg class="action-icon blocked" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                  <line x1="18" y1="6" x2="6" y2="18"></line>
+                  <line x1="6" y1="6" x2="18" y2="18"></line>
+                </svg>
+                <div class="action-text blocked-desc">
+                  <strong>Staff Directory</strong> <span class="tag" style="color: var(--danger)">403 Forbidden</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Suggested Prompts for Customer (Michael Bosh) -->
+            <div class="spec-prompts-section">
+              <div class="spec-prompts-label">Suggested Prompts</div>
+              <div class="spec-prompts-list" id="customer2PromptsContainer">
                 <!-- Rendered dynamically -->
               </div>
             </div>
@@ -275,7 +349,10 @@
             <div class="spec-title-row">
               <div class="spec-role-label manager">
                 <span>👔</span>
-                <span>Store Manager</span>
+                <div class="spec-role-titles">
+                  <span class="spec-role-name">Store Manager (Alice)</span>
+                  <span class="spec-role-email">manager@biscuit-coffee.com</span>
+                </div>
               </div>
               <span class="spec-badge">+ biscuit_coffee_manager</span>
             </div>
@@ -377,7 +454,7 @@
                   <span>biscuit_coffee_agent</span>
                   <span class="brand-badge">Google ADK</span>
                 </div>
-                <div class="agent-status-label">Model: gemini-2.5-flash • Apigee MCP Gateway Enabled</div>
+                <div class="agent-status-label" id="agentStatusLabel">Loading agent configuration&hellip;</div>
               </div>
             </div>
 
@@ -453,7 +530,7 @@
       <div class="modal-body arch-modal-body">
         <!-- Diagram Container -->
         <div class="arch-diagram-canvas">
-          <img src="assets/architecture_diagram.png" alt="Apigee & Keycloak AI Agent Architecture Diagram" class="arch-diagram-large-img" id="archDiagramImg">
+          <img src="assets/architecture_diagram_v3.png" alt="Apigee & Keycloak AI Agent Architecture Diagram" class="arch-diagram-large-img" id="archDiagramImg">
         </div>
 
         <!-- Request Flow Summary Pills -->
@@ -512,6 +589,77 @@
       </svg>
     </button>
   </div>
+
+  <!-- SETTINGS DRAWER (slides in from the right) -->
+  <div class="settings-backdrop" id="settingsBackdrop"></div>
+  <aside class="settings-drawer" id="settingsDrawer" role="dialog" aria-modal="true" aria-labelledby="settingsTitle" aria-hidden="true">
+    <div class="settings-header">
+      <div class="settings-title-group">
+        <div class="settings-title" id="settingsTitle">Settings</div>
+        <div class="settings-subtitle">Hosting topology &amp; Apigee consumer audit logs</div>
+      </div>
+      <div class="settings-header-actions">
+        <button type="button" class="settings-icon-btn" id="settingsRefreshBtn" title="Refresh">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="23 4 23 10 17 10"></polyline>
+            <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
+          </svg>
+        </button>
+        <button type="button" class="settings-icon-btn" id="settingsMaximizeBtn" title="Maximize panel" aria-pressed="false">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="15 3 21 3 21 9"></polyline>
+            <polyline points="9 21 3 21 3 15"></polyline>
+            <line x1="21" y1="3" x2="14" y2="10"></line>
+            <line x1="3" y1="21" x2="10" y2="14"></line>
+          </svg>
+        </button>
+        <button type="button" class="settings-icon-btn close" id="settingsCloseBtn" title="Close (Esc)">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg>
+        </button>
+      </div>
+    </div>
+
+    <div class="settings-tabs" role="tablist">
+      <button type="button" role="tab" class="settings-tab active" id="settingsTabHosting" data-tab="hosting" aria-selected="true" aria-controls="settingsHostingPane">Hosting &amp; Topology</button>
+      <button type="button" role="tab" class="settings-tab" id="settingsTabOverview" data-tab="overview" aria-selected="false" aria-controls="settingsOverviewPane">Audit Overview</button>
+      <button type="button" role="tab" class="settings-tab" id="settingsTabEntries" data-tab="entries" aria-selected="false" aria-controls="settingsEntriesPane">Audit Entries</button>
+    </div>
+
+    <div class="settings-body">
+      <section class="settings-pane active" id="settingsHostingPane" role="tabpanel" aria-labelledby="settingsTabHosting"></section>
+
+      <!-- Shared controls + sub-panes for the two audit-log tabs -->
+      <div class="settings-logs-shell" id="settingsLogsShell">
+        <div class="logs-toolbar">
+          <div class="range-chips" id="logsRangeChips" role="group" aria-label="Time range">
+            <button type="button" class="range-chip" data-range="1h">1h</button>
+            <button type="button" class="range-chip" data-range="3h">3h</button>
+            <button type="button" class="range-chip active" data-range="1d">1d</button>
+            <button type="button" class="range-chip" data-range="3d">3d</button>
+            <button type="button" class="range-chip" data-range="7d">7d</button>
+            <button type="button" class="range-chip" data-range="30d">30d</button>
+          </div>
+          <div class="logs-filters">
+            <select id="logsEventFilter" class="logs-select" aria-label="Event type">
+              <option value="all">All events</option>
+              <option value="quota_exceeded">Quota exceeded (429)</option>
+              <option value="order_limit_exceeded">Large order blocked (422)</option>
+              <option value="jwt_access">JWT access</option>
+            </select>
+            <select id="logsEnvFilter" class="logs-select" aria-label="Environment">
+              <option value="all">All environments</option>
+            </select>
+          </div>
+        </div>
+        <div class="logs-meta" id="logsMeta"></div>
+        <section class="settings-pane" id="settingsOverviewPane" role="tabpanel" aria-labelledby="settingsTabOverview"></section>
+        <section class="settings-pane" id="settingsEntriesPane" role="tabpanel" aria-labelledby="settingsTabEntries"></section>
+      </div>
+    </div>
+  </aside>
 
   <!-- Scripts -->
   <script type="module" src="js/app.js"></script>

@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!--
+  The single refusal for every object-level authorisation failure on orders.
+
+  WHY 404 AND NOT 403
+  "Not yours" and "does not exist" must be indistinguishable. If an unowned
+  order returned 403 while a nonexistent one returned 404, the difference would
+  confirm that the order exists - an enumeration oracle that turns a blocked
+  attack into a working customer-discovery tool. Every deny path therefore
+  produces this identical status, body and wording.
+
+  X-DEBUG-REASON
+  order.ownership_reason distinguishes not_found / not_owner / lookup_failed /
+  invalid_order_id / no_caller_identity so the real cause can be shown in the
+  tool card or a trace during the demo, without the response BODY leaking it.
+  Note this header is a demo affordance: in a production deployment it would be
+  stripped at the edge, since anything the client can read is an oracle.
+
+  Shape matches RF-Invalid-Scope and RF-Order-Limit-Exceeded ({error, message})
+  because that is what the managed MCP service wraps into a tool result: a 4xx
+  from this proxy reaches the agent as HTTP 200 + CallToolResult{isError:true}
+  whose text is this JSON body verbatim. `message` is what the customer hears,
+  and `error` is the stable code the web UI classifies on.
+-->
+<RaiseFault continueOnError="false" enabled="true" name="RF-Order-Not-Found">
+  <DisplayName>RF-Order-Not-Found</DisplayName>
+  <FaultResponse>
+    <Set>
+      <Headers>
+        <Header name="Content-Type">application/json</Header>
+        <Header name="X-Debug-Reason">{order.ownership_reason}</Header>
+      </Headers>
+      <Payload contentType="application/json">{
+  "error": "order_not_found",
+  "message": "I could not find that order on your account. Please check the order ID, or ask our staff if you think this is a mistake."
+}</Payload>
+      <StatusCode>404</StatusCode>
+      <ReasonPhrase>Not Found</ReasonPhrase>
+    </Set>
+  </FaultResponse>
+</RaiseFault>

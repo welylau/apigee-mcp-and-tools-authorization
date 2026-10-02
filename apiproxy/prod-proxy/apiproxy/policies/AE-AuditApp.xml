@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!--
+  AUDIT LOGGING - loads the developer app bound to the caller's consumer key.
+  The key is the VERIFIED JWT azp (audit.client_id), so this is authoritative.
+  Only runs on the large-order rejection path. continueOnError=true.
+-->
+<AccessEntity continueOnError="true" enabled="true" name="AE-AuditApp">
+  <DisplayName>AE-AuditApp</DisplayName>
+  <EntityType value="app"/>
+  <EntityIdentifier ref="audit.client_id" type="consumerkey"/>
+  <OutputFormat>JSON</OutputFormat>
+</AccessEntity>

@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!--
+  AUDIT LOGGING - writes one structured record to Cloud Logging
+  (log: apigee-consumer-audit) for every per-tool quota rejection
+  (e.g. more than 3 placeOrder calls in 1 minute).
+
+  Runs in the PostClientFlow: after the 429 has been sent, so it adds no
+  latency, and it executes on fault paths too.
+
+  Requires the proxy to be deployed with a service account that has
+  roles/logging.logWriter.
+
+  * API key is logged ONLY as a SHA-256 fingerprint (audit.key_fp).
+  * end_user claims here come from DecodeJWT (signature NOT verified at this
+    layer) and are flagged verified=false. The authoritative, verified end-user
+    record is written by Biscuit-Coffee-Shop.
+  * audit.attributes_json is a JSON object built by JS-AuditAttributes and is
+    embedded unquoted; it defaults to {}.
+-->
+<MessageLogging continueOnError="true" enabled="true" name="ML-AuditQuotaViolation">
+  <DisplayName>ML-AuditQuotaViolation</DisplayName>
+  <CloudLogging>
+    <LogName>projects/{organization.name}/logs/apigee-consumer-audit</LogName>
+    <Message contentType="application/json">{
+  "event": "quota_exceeded",
+  "timestamp": "{system.time}",
+  "epoch_ms": "{client.received.start.timestamp}",
+  "environment": "{environment.name}",
+  "proxy": "{apiproxy.name}",
+  "revision": "{apiproxy.revision}",
+  "correlation_id": "{messageid}",
+  "consumer": {
+    "client_id": "{escapeJSON(audit.client_id)}",
+    "api_key_fp": "{audit.key_fp}",
+    "app": "{escapeJSON(audit.app)}",
+    "developer": "{escapeJSON(audit.developer_email)}",
+    "product": "{escapeJSON(audit.product)}",
+    "attributes": {audit.attributes_json}
+  },
+  "end_user": {
+    "sub": "{escapeJSON(jwt.JWT-Decode.claim.subject)}",
+    "username": "{escapeJSON(jwt.JWT-Decode.claim.preferred_username)}",
+    "email": "{escapeJSON(jwt.JWT-Decode.claim.email)}",
+    "scope": "{escapeJSON(jwt.JWT-Decode.claim.scope)}",
+    "azp": "{escapeJSON(jwt.JWT-Decode.claim.azp)}",
+    "verified": false
+  },
+  "request": {
+    "mcp_method": "{escapeJSON(mcpaudit.method)}",
+    "mcp_tool": "{escapeJSON(mcpaudit.tool)}",
+    "jsonrpc_id": "{escapeJSON(mcpreq.id)}",
+    "verb": "{request.verb}",
+    "path": "{escapeJSON(proxy.basepath)}{escapeJSON(proxy.pathsuffix)}",
+    "status": "429",
+    "client_ip": "{client.ip}"
+  },
+  "detail": {
+    "quota_allowed": "{ratelimit.QU-ProductQuota.allowed.count}{ratelimit.QU-ProductQuota-Header.allowed.count}",
+    "quota_used": "{ratelimit.QU-ProductQuota.used.count}{ratelimit.QU-ProductQuota-Header.used.count}",
+    "quota_exceed_count": "{ratelimit.QU-ProductQuota.exceed.count}{ratelimit.QU-ProductQuota-Header.exceed.count}",
+    "attributes_error": "{escapeJSON(audit.attributes_error)}"
+  }
+}</Message>
+    <!-- Labels are static (Cloud Logging labels are not template-resolved);
+         filter on jsonPayload.environment / jsonPayload.proxy instead. -->
+    <Labels>
+      <Label>
+        <Key>event</Key>
+        <Value>quota_exceeded</Value>
+      </Label>
+    </Labels>
+    <ResourceType>api</ResourceType>
+  </CloudLogging>
+</MessageLogging>

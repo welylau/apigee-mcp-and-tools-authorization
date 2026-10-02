@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!--
+  Pins GET /orders to the authenticated caller.
+
+  THE BACKEND CANNOT BE TRUSTED TO DO THIS. It reads X-User-Email only in the
+  LAST branch of an elif chain, so a caller-supplied ?filter=, ?email=, ?name=
+  or ?loyalty_id= matches earlier and wins. The identity header is a default
+  there, never a constraint.
+
+  OVERWRITE RATHER THAN REJECT. Rejecting a request that carries a filter
+  invites probing and breaks any legitimate future use of the parameter;
+  silently replacing it cannot be bypassed by inventing another parameter,
+  because the three alternatives are removed in the same step.
+
+  Ordering is load-bearing: AssignMessage always applies Remove before Set, so
+  the four caller-supplied parameters are stripped and then exactly one filter
+  we control is written back.
+
+  order.list_filter is built by checkOrderOwnership.js and is guaranteed
+  non-empty - it falls back to a sentinel that matches no document. An empty
+  value would be worse than no filter at all, because the backend's
+  `if filter_key and filter_val:` would then fall through and stream the whole
+  collection.
+
+  Runs only when order.pin_filter is "true", i.e. enforcement is on and the
+  caller is not a manager.
+-->
+<AssignMessage continueOnError="false" enabled="true" name="AM-PinOrderFilter">
+  <DisplayName>AM-PinOrderFilter</DisplayName>
+  <Remove>
+    <QueryParams>
+      <QueryParam name="filter"/>
+      <QueryParam name="email"/>
+      <QueryParam name="name"/>
+      <QueryParam name="loyalty_id"/>
+    </QueryParams>
+  </Remove>
+  <Set>
+    <QueryParams>
+      <QueryParam name="filter">{order.list_filter}</QueryParam>
+    </QueryParams>
+  </Set>
+  <IgnoreUnresolvedVariables>false</IgnoreUnresolvedVariables>
+  <AssignTo createNew="false" transport="http" type="request"/>
+</AssignMessage>

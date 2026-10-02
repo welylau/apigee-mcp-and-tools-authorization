@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!--
+  Publishes the `enforceOrderOwnership` custom attribute from the
+  biscuit-coffee-agent API Product so Biscuit-Coffee-Shop can honour it.
+
+  WHY IT LIVES HERE
+  Same reason as AM-MaxOrderAmount: product attributes only materialise as flow
+  variables inside the proxy that ran VerifyAPIKey, and mcp-proxy-prod is the
+  only one that does. Biscuit-Coffee-Shop authenticates with a Keycloak JWT and
+  has no VerifyAPIKey policy at all, so the value has to be read here and
+  forwarded on the wire as a header.
+
+  WHY PRODUCT LEVEL, NOT OPERATION LEVEL
+  maxOrderAmount is an operation attribute because it only applies to
+  placeOrder. Ownership spans three operations - getOrder, cancelOrder and
+  listOrders - so an operation attribute would mean flipping three switches on
+  stage and getting a half-enforced API if you missed one. A single
+  product-level attribute is one switch with no inconsistent intermediate
+  state.
+
+  WHY THE TEMPLATE CONCATENATES TWO VARIABLES
+  Exactly one of the two VerifyAPIKey policies executes per request, and the
+  one that did not run leaves its variable unresolved, which renders as an
+  empty string. The concatenation therefore always yields the single real
+  value. (Same trick as AM-MaxOrderAmount; AssignVariable's Value element is a
+  literal, not a template, which is why this has to be done in a Template.)
+
+  FAIL CLOSED
+  Nothing here needs to default to "true". An absent, empty or unrecognised
+  header is treated as ENFORCE by checkOrderOwnership.js, which only disables
+  the check for the exact string "false". So a missing attribute, a
+  misconfigured product, or a direct REST caller that never passed through this
+  proxy all stay protected.
+-->
+<AssignMessage continueOnError="false" enabled="true" name="AM-OwnershipFlag">
+  <DisplayName>AM-OwnershipFlag</DisplayName>
+  <AssignVariable>
+    <Name>ownership.enforce</Name>
+    <Template>{verifyapikey.VA-VerifyKey.apiproduct.enforceOrderOwnership}{verifyapikey.VA-VerifyKey-Header.apiproduct.enforceOrderOwnership}</Template>
+  </AssignVariable>
+  <Set>
+    <Headers>
+      <Header name="X-Enforce-Order-Ownership">{ownership.enforce}</Header>
+      <!-- Proves to Biscuit-Coffee-Shop that these policy headers were set by
+           this proxy and not by the client.
+
+           Biscuit-Coffee-Shop is directly reachable at prod.apigee-demo.com
+           with nothing more than an ordinary customer token, so without this
+           the headers are attacker-controlled: a customer could send
+           `X-Enforce-Order-Ownership: false` to switch off the ownership check,
+           or `X-Max-Order-Amount: 999999` to lift their own spending cap. Both
+           were confirmed against the live gateway before this was added.
+
+           Covers BOTH policy headers, which is why it is set here rather than
+           in AM-MaxOrderAmount: this policy runs last, so one header carries
+           the trust for everything the product publishes.
+
+           Must stay in step with POLICY_SIGNATURE in checkOrderOwnership.js and
+           checkOrderValue.js. In production all three should read it from an
+           encrypted KVM instead of carrying a literal. -->
+      <Header name="X-Policy-Signature">bcs-gw-policy-9d41f7a2c6be4815</Header>
+    </Headers>
+  </Set>
+
+  <AssignTo createNew="false" transport="http" type="request"/>
+  <IgnoreUnresolvedVariables>true</IgnoreUnresolvedVariables>
+</AssignMessage>

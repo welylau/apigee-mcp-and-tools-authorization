@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!--
+  Returns a JSON-RPC 2.0 error when the per-tool MCP quota is exceeded.
+
+  `error.message` is the SINGLE SOURCE OF TRUTH for the customer-facing wording.
+  The ADK agent no longer hardcodes this sentence: mcp_tool.py catches McpError
+  and forwards `{"error": "MCP tool execution failed: <message>"}` to Gemini,
+  whose instruction is simply to relay gateway policy messages verbatim.
+  Editing the sentence here is therefore all that is required to change it.
+
+  Two details are load-bearing:
+    * `id` MUST be echoed - mcp.types.JSONRPCError requires it, and a missing
+      id makes the client drop the response and hang. It is emitted unquoted
+      because the MCP SDK always allocates integer request ids.
+    * The HTTP status stays 429 so Apigee analytics record a genuine rate-limit
+      rejection. The agent installs a transport shim (see tools.py) that reads
+      the body despite the non-2xx status, since the MCP SDK would otherwise
+      call raise_for_status() and discard this payload entirely.
+-->
+<RaiseFault continueOnError="false" enabled="true" name="RF-Quota-Exceeded">
+  <DisplayName>RF-Quota-Exceeded</DisplayName>
+  <FaultResponse>
+    <Set>
+      <Headers>
+        <Header name="Content-Type">application/json</Header>
+        <Header name="Retry-After">60</Header>
+      </Headers>
+      <Payload contentType="application/json">{
+  "jsonrpc": "2.0",
+  "id": {jsonrpc.id},
+  "error": {
+    "code": -32029,
+    "message": "Our policy allows a maximum of 3 orders in a minute. If you need to order more than 3 times in a minute. Please reach out to our staff or wait for the next minute.",
+    "data": {
+      "reason": "quota_exceeded",
+      "relay_verbatim": true,
+      "enforcedBy": "Apigee API Product quota (biscuit-coffee-agent)",
+      "retry_after_seconds": 60
+    }
+  }
+}</Payload>
+      <StatusCode>429</StatusCode>
+      <ReasonPhrase>Too Many Requests</ReasonPhrase>
+    </Set>
+  </FaultResponse>
+</RaiseFault>

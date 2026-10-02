@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!--
+  Caches the menu price list after a cache miss so subsequent orders are priced
+  without a backend call.
+
+  5 minutes is a deliberate compromise: long enough that the callout is rare on a
+  busy shop, short enough that a genuine price change takes effect quickly.
+-->
+<PopulateCache continueOnError="true" enabled="true" name="PC-MenuCache">
+  <DisplayName>PC-MenuCache</DisplayName>
+  <CacheKey>
+    <KeyFragment>biscuit-menu-prices</KeyFragment>
+  </CacheKey>
+  <Scope>Application</Scope>
+  <Source>menu.json</Source>
+  <ExpirySettings>
+    <TimeoutInSec>300</TimeoutInSec>
+  </ExpirySettings>
+</PopulateCache>

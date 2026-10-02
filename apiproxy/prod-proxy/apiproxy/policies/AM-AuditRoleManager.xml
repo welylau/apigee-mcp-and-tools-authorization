@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!-- AUDIT LOGGING - end-user role = manager (scope biscuit_coffee_manager).
+     Runs last so it wins when a token carries both scopes. -->
+<AssignMessage continueOnError="true" enabled="true" name="AM-AuditRoleManager">
+  <DisplayName>AM-AuditRoleManager</DisplayName>
+  <AssignVariable>
+    <Name>audit.user.role</Name>
+    <Value>manager</Value>
+  </AssignVariable>
+  <IgnoreUnresolvedVariables>true</IgnoreUnresolvedVariables>
+  <AssignTo createNew="false" transport="http" type="request"/>
+</AssignMessage>

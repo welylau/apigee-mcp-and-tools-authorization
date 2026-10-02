@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!--
+  AUDIT LOGGING - builds the API-consumer context used by ML-AuditQuotaViolation.
+
+  Must run AFTER VerifyAPIKey and BEFORE the Quota steps: a QuotaViolation stops
+  the request flow, and the FaultRule / PostClientFlow can only read variables
+  that already exist at that point.
+
+  Exactly one of VA-VerifyKey / VA-VerifyKey-Header runs per request, so each
+  template concatenates both; the one that did not run renders as "" (same
+  technique as AM-MaxOrderAmount).
+
+  The API key itself is NEVER stored - only its SHA-256 fingerprint.
+  audit.attributes_json is pre-seeded with "{}" so the log stays valid JSON even
+  if the AccessEntity enumeration (FaultRule) fails.
+-->
+<AssignMessage continueOnError="true" enabled="true" name="AM-AuditConsumerContext">
+  <DisplayName>AM-AuditConsumerContext</DisplayName>
+  <AssignVariable>
+    <Name>audit.client_id</Name>
+    <Template>{verifyapikey.VA-VerifyKey.client_id}{verifyapikey.VA-VerifyKey-Header.client_id}</Template>
+  </AssignVariable>
+  <AssignVariable>
+    <Name>audit.app</Name>
+    <Template>{verifyapikey.VA-VerifyKey.developer.app.name}{verifyapikey.VA-VerifyKey-Header.developer.app.name}</Template>
+  </AssignVariable>
+  <AssignVariable>
+    <Name>audit.developer_email</Name>
+    <Template>{verifyapikey.VA-VerifyKey.developer.email}{verifyapikey.VA-VerifyKey-Header.developer.email}</Template>
+  </AssignVariable>
+  <AssignVariable>
+    <Name>audit.product</Name>
+    <Template>{verifyapikey.VA-VerifyKey.apiproduct.name}{verifyapikey.VA-VerifyKey-Header.apiproduct.name}</Template>
+  </AssignVariable>
+  <AssignVariable>
+    <Name>audit.key_fp</Name>
+    <Template>sha256:{sha256Hex(audit.client_id)}</Template>
+  </AssignVariable>
+  <AssignVariable>
+    <Name>audit.attributes_json</Name>
+    <Value>{}</Value>
+  </AssignVariable>
+  <IgnoreUnresolvedVariables>true</IgnoreUnresolvedVariables>
+  <AssignTo createNew="false" transport="http" type="request"/>
+</AssignMessage>

@@ -4,24 +4,37 @@
  */
 
 import { AdkAgentClient } from './agent-client.js';
+import { SettingsPanel } from './settings-panel.js';
+import { GuidedTour } from './tour/tour-engine.js';
 
 // User Personas & Scopes
 export const PERSONAS = {
   customer: {
     id: 'customer',
     name: 'John Smith',
-    roleName: 'Customer',
+    roleName: 'Customer (John Smith)',
     email: 'customer@biscuit-coffee.com',
     avatar: '👤',
     scopes: ['biscuit_coffee_customer'],
     scopeDescription: 'biscuit_coffee_customer',
     badgeClass: 'customer',
-    summary: 'Standard customer account. Can view menu, place orders, and check rewards.'
+    summary: 'Standard customer account (John Smith). Can view menu, place orders, and check rewards.'
+  },
+  customer2: {
+    id: 'customer2',
+    name: 'Michael Bosh',
+    roleName: 'Customer (Michael Bosh)',
+    email: 'customer2@biscuit-coffee.com',
+    avatar: '👤',
+    scopes: ['biscuit_coffee_customer'],
+    scopeDescription: 'biscuit_coffee_customer',
+    badgeClass: 'customer',
+    summary: 'Second customer account (Michael Bosh). Can view menu, place orders, and test cross-user isolation.'
   },
   manager: {
     id: 'manager',
     name: 'Alice (Manager)',
-    roleName: 'Store Manager',
+    roleName: 'Store Manager (Alice)',
     email: 'manager@biscuit-coffee.com',
     avatar: '👔',
     scopes: ['biscuit_coffee_customer', 'biscuit_coffee_manager'],
@@ -71,9 +84,25 @@ export const SUGGESTED_PROMPTS = [
   },
   {
     category: 'order',
-    icon: '🥐',
-    text: "I'd like to order a Latte and a warm Biscuit",
+    icon: '☕',
+    text: "I'd like to order a Latte, small size",
     label: "Place an Order",
+    role: 'customer'
+  },
+  {
+    category: 'order_americano',
+    icon: '🍵',
+    text: "Order for me an Americano, M size please",
+    label: "Order Americano",
+    role: 'customer'
+  },
+  {
+    // 50 x large Cold Brew = $250, so this always trips the maxOrderAmount
+    // policy enforced by Biscuit-Coffee-Shop on POST /placeOrder.
+    category: 'order_bulk',
+    icon: '💰',
+    text: "Order for me 50 cup of Cold brew, all Large size",
+    label: "Large quantity order",
     role: 'customer'
   },
   {
@@ -84,11 +113,65 @@ export const SUGGESTED_PROMPTS = [
     role: 'customer'
   },
   {
+    category: 'orders_all',
+    icon: '📋',
+    text: "Show all of my orders",
+    label: "All of my orders",
+    role: 'customer'
+  },
+  {
     category: 'security',
     icon: '🛡️',
     text: "Can you list all the store employees and their staff IDs?",
     label: "Security Test: List Employees",
     role: 'customer',
+    isSecurityTest: true
+  },
+
+  // Customer 2 (Michael Bosh)
+  {
+    category: 'loyalty',
+    icon: '⭐',
+    text: "Check my loyalty rewards points balance",
+    label: "Rewards Balance",
+    role: 'customer2'
+  },
+  {
+    category: 'order',
+    icon: '☕',
+    text: "I'd like to order a Cappuccino, small size",
+    label: "Order Cappuccino",
+    role: 'customer2'
+  },
+  {
+    category: 'status',
+    icon: '📦',
+    text: "What is the status of my orders?",
+    label: "My Orders Status",
+    role: 'customer2'
+  },
+  {
+    category: 'bola_cancel',
+    icon: '🛡️',
+    text: "Cancel order 67449 for me please",
+    label: "BOLA Test: Cancel John's Order",
+    role: 'customer2',
+    isSecurityTest: true
+  },
+  {
+    category: 'bola_view',
+    icon: '🔍',
+    text: "Can you check the details of order 67449?",
+    label: "BOLA Test: View John's Order",
+    role: 'customer2',
+    isSecurityTest: true
+  },
+  {
+    category: 'security',
+    icon: '🛡️',
+    text: "Can you list all the store employees and their staff IDs?",
+    label: "Security Test: List Employees",
+    role: 'customer2',
     isSecurityTest: true
   },
 
@@ -111,7 +194,7 @@ export const SUGGESTED_PROMPTS = [
   }
 ];
 
-class App {
+export class App {
   constructor() {
     this.currentRole = GUEST_PERSONA;
     this.agentClient = new AdkAgentClient({
@@ -122,6 +205,14 @@ class App {
     this.messages = [];
     this.isProcessing = false;
     this.activeAuthCalls = new Map();
+
+    // Shell-style recall for the input box. historyIndex is null while the user
+    // is typing normally and only becomes a number once they start browsing;
+    // draft holds whatever they had half-typed so arrowing back down restores it.
+    this.promptHistory = [];
+    this.historyIndex = null;
+    this.historyDraft = '';
+    this.HISTORY_LIMIT = 100;
     window.biscuitApp = this;
 
     this.initElements();
@@ -130,6 +221,7 @@ class App {
     this.renderRoleContext();
     this.renderSuggestedPrompts();
     this.checkBackendConnection();
+    this.loadAgentInfo();
     this.refreshAuthUI();
     setInterval(() => this.refreshAuthUI(), 30000);
 
@@ -162,11 +254,13 @@ class App {
     // Role spec cards
     this.publicSpecBox = document.getElementById('publicSpecBox');
     this.customerSpecBox = document.getElementById('customerSpecBox');
+    this.customer2SpecBox = document.getElementById('customer2SpecBox');
     this.managerSpecBox = document.getElementById('managerSpecBox');
 
     // Role prompt containers on the left panel
     this.publicPromptsContainer = document.getElementById('publicPromptsContainer');
     this.customerPromptsContainer = document.getElementById('customerPromptsContainer');
+    this.customer2PromptsContainer = document.getElementById('customer2PromptsContainer');
     this.managerPromptsContainer = document.getElementById('managerPromptsContainer');
     this.promptChipsContainer = document.getElementById('promptChipsContainer');
     this.messagesArea = document.getElementById('messagesArea');
@@ -177,6 +271,7 @@ class App {
     this.headerClearChatBtn = document.getElementById('headerClearChatBtn');
     this.statusDot = document.getElementById('statusDot');
     this.statusText = document.getElementById('statusText');
+    this.agentStatusLabel = document.getElementById('agentStatusLabel');
     this.scopeFooterText = document.getElementById('scopeFooterText');
 
     // Architecture Modal & Controls
@@ -232,6 +327,25 @@ class App {
       e.preventDefault();
       this.handleUserSubmit();
     });
+
+    // Shell-style prompt recall with the arrow keys.
+    if (this.chatInput) {
+      this.chatInput.addEventListener('keydown', (e) => {
+        if (e.key === 'ArrowUp') {
+          if (this.recallPrompt(-1)) e.preventDefault();
+        } else if (e.key === 'ArrowDown') {
+          if (this.recallPrompt(1)) e.preventDefault();
+        }
+      });
+
+      // Typing anything by hand abandons the browse and makes the new text the
+      // draft. Programmatic writes (recall, prompt chips) do not fire 'input',
+      // so this cannot fight with recallPrompt.
+      this.chatInput.addEventListener('input', () => {
+        this.historyIndex = null;
+        this.historyDraft = this.chatInput.value;
+      });
+    }
 
     // Clear chat (Header & Toolbar)
     if (this.headerClearChatBtn) {
@@ -386,6 +500,32 @@ class App {
     }
   }
 
+  /**
+   * Pulls the live agent runtime configuration (model name, gateway) from the
+   * local proxy server so the toolbar label always reflects the real MODEL_NAME
+   * in .env rather than a value hardcoded in index.html.
+   */
+  async loadAgentInfo() {
+    if (!this.agentStatusLabel) return;
+    try {
+      const res = await fetch('/api/agent-info', { cache: 'no-store' });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const info = await res.json();
+
+      const parts = [];
+      if (info.model) parts.push(`Model: ${info.model}`);
+      if (info.gatewayEnabled) parts.push('Apigee MCP Gateway Enabled');
+      this.agentStatusLabel.textContent = parts.join(' • ');
+
+      if (info.gatewayHostname) {
+        this.agentStatusLabel.title = `MCP endpoint: https://${info.gatewayHostname}/mcp`;
+      }
+    } catch (err) {
+      // Static hosting or server offline - degrade gracefully instead of lying.
+      this.agentStatusLabel.textContent = 'Apigee MCP Gateway Enabled';
+    }
+  }
+
   setMode(mode) {
     this.agentClient.setMode(mode);
     if (this.modeLiveBtn) this.modeLiveBtn.classList.toggle('active', mode === 'auto');
@@ -426,6 +566,7 @@ class App {
   renderRoleContext() {
     const isGuest = this.currentRole.id === 'guest';
     const isCustomer = this.currentRole.id === 'customer';
+    const isCustomer2 = this.currentRole.id === 'customer2';
     const isManager = this.currentRole.id === 'manager';
 
     // Tabs (if present)
@@ -440,7 +581,7 @@ class App {
       this.personaEmail.textContent = 'No active Keycloak session';
       this.personaScopeTag.textContent = '🔑 Scopes: None (Unauthenticated)';
     } else {
-      this.personaCard.className = `current-persona-card ${isCustomer ? 'customer-active' : 'manager-active'}`;
+      this.personaCard.className = `current-persona-card ${isManager ? 'manager-active' : 'customer-active'}`;
       this.personaAvatar.textContent = this.currentRole.avatar;
       this.personaName.textContent = this.currentRole.name;
       this.personaEmail.textContent = this.currentRole.email;
@@ -450,6 +591,7 @@ class App {
     // Highlight spec boxes
     if (this.publicSpecBox) this.publicSpecBox.classList.toggle('highlight', isGuest);
     if (this.customerSpecBox) this.customerSpecBox.classList.toggle('highlight', isCustomer);
+    if (this.customer2SpecBox) this.customer2SpecBox.classList.toggle('highlight', isCustomer2);
     if (this.managerSpecBox) this.managerSpecBox.classList.toggle('highlight', isManager);
 
     // Scope footer note
@@ -463,6 +605,7 @@ class App {
   renderSuggestedPrompts() {
     if (this.publicPromptsContainer) this.publicPromptsContainer.innerHTML = '';
     if (this.customerPromptsContainer) this.customerPromptsContainer.innerHTML = '';
+    if (this.customer2PromptsContainer) this.customer2PromptsContainer.innerHTML = '';
     if (this.managerPromptsContainer) this.managerPromptsContainer.innerHTML = '';
     if (this.promptChipsContainer) this.promptChipsContainer.innerHTML = '';
 
@@ -479,6 +622,8 @@ class App {
 
       chip.innerHTML = `<span>${item.icon}</span> <span>${item.label}</span>`;
       chip.title = item.text;
+      // Stable hook for the Guided Tour spotlight (e.g. "customer-security").
+      chip.dataset.promptId = `${item.role}-${item.category}`;
 
       chip.addEventListener('click', () => {
         this.chatInput.value = item.text;
@@ -489,6 +634,8 @@ class App {
         this.publicPromptsContainer.appendChild(chip);
       } else if (item.role === 'customer' && this.customerPromptsContainer) {
         this.customerPromptsContainer.appendChild(chip);
+      } else if (item.role === 'customer2' && this.customer2PromptsContainer) {
+        this.customer2PromptsContainer.appendChild(chip);
       } else if (item.role === 'manager' && this.managerPromptsContainer) {
         this.managerPromptsContainer.appendChild(chip);
       }
@@ -528,10 +675,75 @@ class App {
     this.scrollToBottom();
   }
 
+  /**
+   * Adds a submitted prompt to the recall history.
+   *
+   * Consecutive duplicates are collapsed (as bash does with ignoredups): the
+   * demo deliberately repeats the same order to trip the rate limit, and
+   * without this the user would have to press Up four times to get past them.
+   */
+  recordPrompt(text) {
+    if (!text) return;
+    if (this.promptHistory[this.promptHistory.length - 1] !== text) {
+      this.promptHistory.push(text);
+      if (this.promptHistory.length > this.HISTORY_LIMIT) {
+        this.promptHistory.shift();
+      }
+    }
+    this.historyIndex = null;
+    this.historyDraft = '';
+  }
+
+  /**
+   * Steps through the prompt history. direction is -1 for older (Up) and
+   * +1 for newer (Down).
+   *
+   * Returns true when the input was taken over, so the caller knows whether to
+   * suppress the key's default caret movement.
+   */
+  recallPrompt(direction) {
+    if (!this.chatInput || this.promptHistory.length === 0) return false;
+
+    if (this.historyIndex === null) {
+      // Not browsing yet: Down should behave normally, Up enters the history.
+      if (direction > 0) return false;
+      this.historyDraft = this.chatInput.value;
+      this.historyIndex = this.promptHistory.length - 1;
+    } else {
+      const next = this.historyIndex + direction;
+      if (next < 0) {
+        this.historyIndex = 0;          // already at the oldest entry
+      } else if (next >= this.promptHistory.length) {
+        // Stepped past the newest entry: hand back the unsent draft.
+        this.historyIndex = null;
+        this.setInputValue(this.historyDraft);
+        return true;
+      } else {
+        this.historyIndex = next;
+      }
+    }
+
+    this.setInputValue(this.promptHistory[this.historyIndex]);
+    return true;
+  }
+
+  /** Replaces the input text and parks the caret at the end. */
+  setInputValue(value) {
+    const text = value || '';
+    this.chatInput.value = text;
+    // Deferred so the browser does not move the caret back itself.
+    requestAnimationFrame(() => {
+      try {
+        this.chatInput.setSelectionRange(text.length, text.length);
+      } catch (e) {}
+    });
+  }
+
   async handleUserSubmit() {
     const text = this.chatInput.value.trim();
     if (!text || this.isProcessing) return;
 
+    this.recordPrompt(text);
     this.chatInput.value = '';
     this.chatInput.focus();
     this.isProcessing = true;
@@ -540,18 +752,20 @@ class App {
     // 1. Append User Message
     this.appendMessage('user', text);
 
-    // 2. Show Typing Indicator
+    // 2. Show Typing Indicator (becomes a live, streaming bubble on first text)
     const typingElement = this.showTypingIndicator();
+    const stream = this.createStreamView(typingElement);
 
     try {
       // 3. Call Agent (Live ADK or Grounded Simulator)
-      const response = await this.agentClient.sendMessage(text, this.currentRole);
+      const response = await this.agentClient.sendMessage(text, this.currentRole, stream.handlers);
 
-      // Remove typing indicator
+      // Remove typing indicator / live bubble
       typingElement.remove();
 
-      // 4. Append Agent Message
+      // 4. Append the final Agent Message (full markdown + tool card)
       this.appendMessage('agent', response.text, response.toolCall, response.liveError);
+      this.emitToolResult(response);
     } catch (err) {
       typingElement.remove();
       this.appendMessage('agent', `⚠️ An error occurred while communicating with the agent: ${err.message}`);
@@ -559,6 +773,47 @@ class App {
       this.isProcessing = false;
       this.sendBtn.disabled = false;
     }
+  }
+
+  /**
+   * Live view for a streaming reply. Until text arrives, the typing dots show
+   * which tool the agent is calling through Apigee; the first text chunk turns
+   * the row into a bubble that grows as Gemini generates. The caller replaces
+   * the row with the final message (tool card etc.) when the turn completes.
+   */
+  createStreamView(row) {
+    const wrapper = row.querySelector('.msg-body-wrapper');
+    let acc = '';
+    let bubble = null;
+    const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    return {
+      handlers: {
+        onToolCall: (name) => {
+          if (bubble || !wrapper) return;
+          let status = wrapper.querySelector('.typing-status');
+          if (!status) {
+            status = document.createElement('div');
+            status.className = 'typing-status';
+            wrapper.appendChild(status);
+          }
+          status.innerHTML = `Calling <code>${esc(name)}</code> via Apigee…`;
+          this.scrollToBottom();
+        },
+        onDelta: (chunk) => {
+          if (!wrapper || !chunk) return;
+          acc += chunk;
+          if (!bubble) {
+            const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            wrapper.innerHTML = `
+              <div class="msg-meta"><span>Biscuit Coffee Agent</span><span>•</span><span>${timeStr}</span></div>
+              <div class="msg-bubble streaming"></div>`;
+            bubble = wrapper.querySelector('.msg-bubble');
+          }
+          bubble.innerHTML = this.highlightKeyValues(this.formatMarkdown(acc));
+          this.scrollToBottom();
+        },
+      },
+    };
   }
 
   appendMessage(sender, text, toolCall = null, note = null) {
@@ -574,8 +829,12 @@ class App {
     let toolCallHtml = '';
     if (toolCall) {
       const isSuccess = toolCall.success;
-      let statusClass = isSuccess ? 'success' : 'forbidden';
-      let statusText = isSuccess ? toolCall.status : `${toolCall.status} (Scope Blocked)`;
+      // The classifier supplies these for real gateway responses. The fallbacks
+      // keep the scripted demo in mock-agent.js rendering as it always has.
+      let statusClass = toolCall.statusClass || (isSuccess ? 'success' : 'forbidden');
+      let statusText = toolCall.statusNote
+        ? `${toolCall.status} (${toolCall.statusNote})`
+        : (isSuccess ? toolCall.status : `${toolCall.status} (Scope Blocked)`);
 
       let authActionHtml = '';
       if (toolCall.isAuth) {
@@ -592,7 +851,10 @@ class App {
             </button>
           </div>
         `;
-      } else if (toolCall.needsManagerAuth || !toolCall.success || toolCall.status.includes('403')) {
+      } else if (!toolCall.isPolicyBlock &&
+                 (toolCall.needsManagerAuth || toolCall.status.includes('403') || toolCall.status.includes('401'))) {
+        // Only an authorisation failure is fixable by logging in. A rate limit or
+        // an over-value order is not, so those must not offer a Login button.
         const isGuest = !this.currentRole || this.currentRole.id === 'guest';
         if (isGuest) {
           authActionHtml = `
@@ -619,7 +881,8 @@ class App {
             <div><strong>Apigee Flow:</strong> <code>${toolCall.endpoint}</code></div>
             <div><strong>Policy Executed:</strong> <code>${toolCall.policy}</code></div>
             <div><strong>Required Scope:</strong> <code>${toolCall.scopeRequired}</code></div>
-            ${toolCall.error ? `<div style="color: var(--danger)"><strong>Security Result:</strong> ${toolCall.error}</div>` : ''}
+            ${toolCall.enforcedBy ? `<div><strong>Enforced By:</strong> <code>${toolCall.enforcedBy}</code></div>` : ''}
+            ${(toolCall.error && !this.isEchoedInMessage(toolCall.error, text)) ? `<div style="color: ${toolCall.isPolicyBlock ? 'var(--warning)' : 'var(--danger)'}"><strong>${toolCall.resultLabel || 'Security Result'}:</strong> ${toolCall.error}</div>` : ''}
             ${authActionHtml}
           </div>
         </div>
@@ -661,7 +924,7 @@ class App {
           <span>${timeStr}</span>
         </div>
         <div class="msg-bubble">
-          ${this.formatMarkdown(text)}
+          ${sender === 'agent' ? this.highlightKeyValues(this.formatMarkdown(text)) : this.formatMarkdown(text)}
           ${toolCallHtml}
           ${inlineLoginHtml}
           ${noteHtml}
@@ -718,6 +981,7 @@ class App {
 
       // 6. Append agent's real response
       this.appendMessage('agent', result.text, result.toolCall, result.liveError);
+      this.emitToolResult(result);
 
       // 7. Refresh Auth UI to show active token
       await this.refreshAuthUI();
@@ -820,6 +1084,46 @@ class App {
     return html;
   }
 
+  /**
+   * True when the tool card's result line would only repeat what the agent has
+   * already said in the message above it.
+   *
+   * The gateway owns these sentences (RF-Quota-Exceeded, RF-Order-Limit-Exceeded)
+   * and the agent is instructed to relay them verbatim, so rendering both puts
+   * the same paragraph on screen twice. Comparing the text - rather than just
+   * dropping the line for every policy block - means the card still shows the
+   * authoritative wording if the model ever paraphrases or truncates it.
+   */
+  isEchoedInMessage(error, text) {
+    if (!error || !text) return false;
+    const norm = s => String(s).replace(/\s+/g, ' ').trim().toLowerCase();
+    return norm(text).includes(norm(error));
+  }
+
+  /**
+   * Emphasises the values a viewer actually needs to read off the screen -
+   * order IDs and money amounts - in an agent reply.
+   *
+   * Runs on the output of formatMarkdown, which has already HTML-escaped the
+   * text. Tags are held aside and only the text between them is rewritten, so
+   * a <strong> can never be injected into an attribute such as an href.
+   */
+  highlightKeyValues(html) {
+    if (!html) return html;
+
+    // Odd indices are the captured tags; even indices are the text between them.
+    return html.split(/(<[^>]*>)/).map((chunk, i) => {
+      if (i % 2 === 1 || !chunk) return chunk;
+      return chunk
+        // "order ID is 46279", "Order ID: 46279", "order #46279"
+        .replace(
+          /\b(orders?\s*(?:id|number)\s*(?:is\s*|:\s*|=\s*)?|orders?\s*#\s*)(\d{3,})/gi,
+          (m, lead, id) => `${lead}<strong>${id}</strong>`)
+        // Money: $3.75, $100, $1,250.00
+        .replace(/\$\d[\d,]*(?:\.\d+)?/g, '<strong>$&</strong>');
+    }).join('');
+  }
+
   clearChat() {
     this.messagesArea.innerHTML = '';
     this.messages = [];
@@ -833,12 +1137,20 @@ class App {
     this.messagesArea.scrollTop = this.messagesArea.scrollHeight;
   }
 
+  /** Notifies the Guided Tour of the outcome of an agent turn. */
+  emitToolResult(response) {
+    window.dispatchEvent(new CustomEvent('biscuit:toolresult', {
+      detail: { toolCall: response?.toolCall || null, text: response?.text || '' }
+    }));
+  }
+
   openModal() {
     if (!this.archModal) return;
     if (this.archMinimizedDock) {
       this.archMinimizedDock.style.display = 'none';
     }
     this.archModal.classList.add('active');
+    window.dispatchEvent(new CustomEvent('biscuit:archopen'));
   }
 
   closeModal() {
@@ -877,7 +1189,7 @@ class App {
         const email = activeToken.userinfo?.email || activeToken.claims?.email || activeToken.claims?.preferred_username || this.agentClient.userId || 'customer@biscuit-coffee.com';
         let name = activeToken.userinfo?.name || activeToken.claims?.name || activeToken.claims?.preferred_username;
         if (!name || name === email) {
-          name = email.includes('manager') ? 'Alice (Manager)' : 'John Smith';
+          name = email.includes('manager') ? 'Alice (Manager)' : (email.includes('customer2') ? 'Michael Bosh' : 'John Smith');
         }
 
         const tokenScope = activeToken.scope || activeToken.claims?.scope || '';
@@ -887,6 +1199,7 @@ class App {
         const isManager = tokenScope.includes('biscuit_coffee_manager') ||
                           email.includes('manager') ||
                           realmRoles.includes('biscuit_coffee_manager');
+        const isCustomer2 = email === 'customer2@biscuit-coffee.com' || email.includes('customer2');
 
         // Extract individual scopes list
         let scopesList = [];
@@ -901,6 +1214,14 @@ class App {
         if (isManager) {
           this.currentRole = {
             ...PERSONAS.manager,
+            name: name,
+            email: email,
+            scopes: scopesList,
+            scopeDescription: scopeDescription
+          };
+        } else if (isCustomer2) {
+          this.currentRole = {
+            ...PERSONAS.customer2,
             name: name,
             email: email,
             scopes: scopesList,
@@ -987,6 +1308,9 @@ class App {
     } catch (e) {
       console.warn('Error refreshing Auth UI:', e);
     }
+    window.dispatchEvent(new CustomEvent('biscuit:personachange', {
+      detail: { id: this.currentRole?.id || 'guest' }
+    }));
   }
 
   async handleAuthBtnClick() {
@@ -1080,4 +1404,16 @@ class App {
 // Bootstrap on DOM ready
 document.addEventListener('DOMContentLoaded', () => {
   window.coffeeApp = new App();
+  // Settings drawer authenticates to the BFF with the signed-in user's token;
+  // checkActiveToken() refreshes it first when it is close to expiry.
+  new SettingsPanel(async () => {
+    const t = await window.coffeeApp.agentClient.checkActiveToken();
+    return t && t.active && t.access_token ? t.access_token : null;
+  });
+
+  // Interactive Guided Tour: auto-shows the chooser on first visit (or with
+  // ?tour=1 / ?tour=<missionId>) and can be reopened from the header.
+  window.biscuitTour = new GuidedTour(window.coffeeApp);
+  const tourBtn = document.getElementById('headerTourBtn');
+  if (tourBtn) tourBtn.addEventListener('click', () => window.biscuitTour.open());
 });

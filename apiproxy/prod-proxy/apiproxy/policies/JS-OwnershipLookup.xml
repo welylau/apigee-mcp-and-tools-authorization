@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!--
+  DELETE path. Reads the SC-GetOrderOwner pre-flight callout and decides
+  ownership BEFORE the target is invoked.
+
+  A delete cannot be undone, so the check has to happen on the way in. This is
+  the deliberate asymmetry with JS-OwnershipResponse, which checks the read
+  path on the way out for free.
+-->
+<Javascript continueOnError="false" enabled="true" timeLimit="200" name="JS-OwnershipLookup">
+  <DisplayName>JS-OwnershipLookup</DisplayName>
+  <Properties>
+    <Property name="mode">lookup</Property>
+  </Properties>
+  <ResourceURL>jsc://checkOrderOwnership.js</ResourceURL>
+</Javascript>

@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!--
+  Replaces the placeOrder success body with the customer-ready confirmation.
+
+  WHY THE PAYLOAD IS REBUILT RATHER THAN PATCHED
+  The response is rewritten as exactly {order_id, message} - the same shape the
+  OpenAPI spec already declares for this operation. That keeps the contract
+  unchanged, so nothing downstream (the managed MCP service, the tool schema)
+  has to be touched, and it drops the internal total_amount field rather than
+  leaking an undeclared property.
+
+  The agent relays `message` verbatim, so this policy is what the customer
+  ultimately reads.
+-->
+<AssignMessage continueOnError="false" enabled="true" name="AM-OrderConfirmation">
+  <DisplayName>AM-OrderConfirmation</DisplayName>
+  <Set>
+    <Payload contentType="application/json">{
+  "order_id": "{orderres.order_id}",
+  "message": "{order.confirmation_message}"
+}</Payload>
+  </Set>
+  <AssignTo createNew="false" transport="http" type="response"/>
+  <IgnoreUnresolvedVariables>false</IgnoreUnresolvedVariables>
+</AssignMessage>

@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!--
+  Pulls the order id and total out of the backend's placeOrder response so the
+  confirmation sentence can be built from them.
+
+  Source is `response` (not `request`) because this runs on the Response flow,
+  after the target has replied.
+
+  continueOnError is true: if the backend ever returns a shape without these
+  fields, formatOrderConfirmation.js detects the gap and leaves the original
+  message alone rather than showing the customer a broken sentence.
+-->
+<ExtractVariables continueOnError="true" enabled="true" name="EV-OrderResult">
+  <DisplayName>EV-OrderResult</DisplayName>
+  <Source clearPayload="false">response</Source>
+  <JSONPayload>
+    <Variable name="order_id" type="string">
+      <JSONPath>$.order_id</JSONPath>
+    </Variable>
+    <Variable name="total_amount" type="string">
+      <JSONPath>$.total_amount</JSONPath>
+    </Variable>
+  </JSONPayload>
+  <VariablePrefix>orderres</VariablePrefix>
+  <IgnoreUnresolvedVariables>true</IgnoreUnresolvedVariables>
+</ExtractVariables>

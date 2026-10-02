@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!--
+  AUDIT LOGGING - loads the API Product chosen by JS-AuditPrepare (one of the
+  products bound to the caller's key). Large-order rejection path only.
+-->
+<AccessEntity continueOnError="true" enabled="true" name="AE-AuditProduct">
+  <DisplayName>AE-AuditProduct</DisplayName>
+  <EntityType value="apiproduct"/>
+  <EntityIdentifier ref="audit.product" type="apiproductname"/>
+  <OutputFormat>JSON</OutputFormat>
+</AccessEntity>

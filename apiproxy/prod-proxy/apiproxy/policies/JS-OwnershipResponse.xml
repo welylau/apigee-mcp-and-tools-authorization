@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!--
+  GET /orders/{id} path. Reads the target's OWN response and compares the owner.
+
+  Because the operation is non-destructive the target call is itself the
+  ownership lookup, so this check costs zero extra backend calls. Worth saying
+  out loud in the demo: the cheap check is only available because the operation
+  is safe.
+
+  The response is discarded and replaced by RF-Order-Not-Found when the check
+  fails, so nothing leaks.
+-->
+<Javascript continueOnError="false" enabled="true" timeLimit="200" name="JS-OwnershipResponse">
+  <DisplayName>JS-OwnershipResponse</DisplayName>
+  <Properties>
+    <Property name="mode">response</Property>
+  </Properties>
+  <ResourceURL>jsc://checkOrderOwnership.js</ResourceURL>
+</Javascript>

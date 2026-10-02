@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!--
+  Captures the JSON-RPC 2.0 request id from the inbound MCP call.
+
+  RF-Quota-Exceeded must echo this id back, because mcp.types.JSONRPCError
+  declares `id` as a REQUIRED field (str | int). An error response without it
+  fails client-side pydantic validation, the pending tool call is never
+  resolved, and the agent hangs instead of receiving the message.
+
+  continueOnError is true so a non-JSON or malformed body never breaks the
+  main flow - AM-JsonRpcIdDefault supplies a fallback in that case.
+-->
+<ExtractVariables continueOnError="true" enabled="true" name="EV-JsonRpcId">
+  <DisplayName>EV-JsonRpcId</DisplayName>
+  <Source clearPayload="false">request</Source>
+  <JSONPayload>
+    <Variable name="id" type="string">
+      <JSONPath>$.id</JSONPath>
+    </Variable>
+  </JSONPayload>
+  <VariablePrefix>mcpreq</VariablePrefix>
+  <IgnoreUnresolvedVariables>true</IgnoreUnresolvedVariables>
+</ExtractVariables>

@@ -131,6 +131,44 @@ if ! sudo docker exec "$KEYCLOAK_CONTAINER" /opt/keycloak/bin/kcadm.sh get users
 else
   echo "User '$MANAGER_USER' already exists."
 fi
-sudo docker exec "$KEYCLOAK_CONTAINER" /opt/keycloak/bin/kcadm.sh add-roles -r "$REALM_NAME" --uusername "$MANAGER_USER" --rolename manager --rolename customer 2>/dev/null || true
+# 9c. Wely Lau customer user
+WELY_USER="welylau@google.com"
+WELY_PASS="ilovecoffee"
+if ! sudo docker exec "$KEYCLOAK_CONTAINER" /opt/keycloak/bin/kcadm.sh get users -r "$REALM_NAME" -q username="$WELY_USER" | grep -q "\"username\" : \"$WELY_USER\""; then
+  sudo docker exec "$KEYCLOAK_CONTAINER" /opt/keycloak/bin/kcadm.sh create users -r "$REALM_NAME" \
+    -s username="$WELY_USER" \
+    -s email="$WELY_USER" \
+    -s firstName="Wely" \
+    -s lastName="Lau" \
+    -s enabled=true \
+    -s emailVerified=true
+
+  sudo docker exec "$KEYCLOAK_CONTAINER" /opt/keycloak/bin/kcadm.sh set-password -r "$REALM_NAME" \
+    --username "$WELY_USER" \
+    --new-password "$WELY_PASS"
+else
+  echo "User '$WELY_USER' already exists."
+fi
+sudo docker exec "$KEYCLOAK_CONTAINER" /opt/keycloak/bin/kcadm.sh add-roles -r "$REALM_NAME" --uusername "$WELY_USER" --rolename customer 2>/dev/null || true
+
+# 9d. Michael Bosh customer user
+CUSTOMER2_USER="customer2@biscuit-coffee.com"
+CUSTOMER2_PASS="ilovecoffee"
+if ! sudo docker exec "$KEYCLOAK_CONTAINER" /opt/keycloak/bin/kcadm.sh get users -r "$REALM_NAME" -q username="$CUSTOMER2_USER" | grep -q "\"username\" : \"$CUSTOMER2_USER\""; then
+  sudo docker exec "$KEYCLOAK_CONTAINER" /opt/keycloak/bin/kcadm.sh create users -r "$REALM_NAME" \
+    -s username="$CUSTOMER2_USER" \
+    -s email="$CUSTOMER2_USER" \
+    -s firstName="Michael" \
+    -s lastName="Bosh" \
+    -s enabled=true \
+    -s emailVerified=true
+
+  sudo docker exec "$KEYCLOAK_CONTAINER" /opt/keycloak/bin/kcadm.sh set-password -r "$REALM_NAME" \
+    --username "$CUSTOMER2_USER" \
+    --new-password "$CUSTOMER2_PASS"
+else
+  echo "User '$CUSTOMER2_USER' already exists."
+fi
+sudo docker exec "$KEYCLOAK_CONTAINER" /opt/keycloak/bin/kcadm.sh add-roles -r "$REALM_NAME" --uusername "$CUSTOMER2_USER" --rolename customer 2>/dev/null || true
 
 echo "=== Keycloak Setup Completed Successfully ==="

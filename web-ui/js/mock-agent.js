@@ -42,6 +42,11 @@ export const MOCK_DATABASE = {
       loyalty_points: 120,
       payment_methods: ["Visa ending in 4242 (Default)", "Apple Pay"]
     },
+    "customer2@biscuit-coffee.com": {
+      name: "Michael Bosh",
+      loyalty_points: 95,
+      payment_methods: ["MasterCard ending in 5512 (Default)"]
+    },
     "manager@biscuit-coffee.com": {
       name: "Alice Manager",
       loyalty_points: 450,
@@ -171,7 +176,37 @@ export async function simulateAgentResponse(userText, currentRole) {
     };
   }
 
-  // 6. Ordering coffee / pastries
+  // 6. Order Listing / Status / Tracking
+  if (query.includes("all of my orders") || query.includes("all orders") || query.includes("my orders") || query.includes("show all") || query.includes("status") || query.includes("track")) {
+    return {
+      text: `Here are all the active orders associated with your account (**${currentRole.email}**):\n\n• **Order #67449**: 1x Latte (Small) — \`Completed\` ($3.50)\n• **Order #67450**: 1x Americano (Medium) — \`Brewing / In Preparation\` ($3.75)\n\nLet me know if you would like more details or want to place another order!`,
+      toolCall: {
+        name: "mcp_proxy_listOrders",
+        endpoint: "GET /biscuit-coffee/orders",
+        policy: "AM-ListOrders",
+        scopeRequired: "biscuit_coffee_customer",
+        status: "200 OK",
+        success: true
+      }
+    };
+  }
+
+  // 7. Order Cancellation
+  if (query.includes("cancel")) {
+    return {
+      text: `I looked up your active orders for **${user.name}**:\n\n📦 **Order #67450**:\n• **Items:** Americano (Medium)\n• **Status:** \`Brewing / In Preparation\`\n• **Estimated Pickup:** 4 minutes\n\nIf you need to make changes or cancel, please let me know right away before the baristas complete packaging!`,
+      toolCall: {
+        name: "mcp_proxy_getOrder",
+        endpoint: "GET /biscuit-coffee/orders/67450",
+        policy: "AM-GetOrder",
+        scopeRequired: "biscuit_coffee_customer",
+        status: "200 OK",
+        success: true
+      }
+    };
+  }
+
+  // 8. Ordering coffee / pastries
   if (query.includes("order") || query.includes("buy") || query.includes("cappuccino") || query.includes("latte") || query.includes("croissant") || query.includes("biscuit")) {
     const newId = "ord-" + Math.floor(1000 + Math.random() * 9000);
     user.loyalty_points += 10;
@@ -186,21 +221,6 @@ export async function simulateAgentResponse(userText, currentRole) {
         status: "200 OK",
         success: true,
         orderId: newId
-      }
-    };
-  }
-
-  // 7. Order Status / Cancellation
-  if (query.includes("status") || query.includes("cancel") || query.includes("track")) {
-    return {
-      text: `I looked up your active orders for **${user.name}**:\n\n📦 **Order #ord-8921**:\n• **Items:** Latte (Oat Milk), Warm Biscuit with Honey\n• **Status:** \`Brewing / In Preparation\`\n• **Estimated Pickup:** 4 minutes\n\nIf you need to make changes or cancel, please let me know right away before the baristas complete packaging!`,
-      toolCall: {
-        name: "mcp_proxy_getOrder",
-        endpoint: "GET /biscuit-coffee/orders/ord-8921",
-        policy: "AM-GetOrder",
-        scopeRequired: "biscuit_coffee_customer",
-        status: "200 OK",
-        success: true
       }
     };
   }

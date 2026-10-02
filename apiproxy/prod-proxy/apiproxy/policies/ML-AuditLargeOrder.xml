@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!--
+  AUDIT LOGGING - one Cloud Logging record (log: apigee-consumer-audit) for
+  every order rejected because its value exceeds the limit (USD 100).
+
+  PostClientFlow: runs after the 422 is sent (no latency) and on fault paths.
+  Requires deployment with an SA holding roles/logging.logWriter.
+
+  End user is from the VERIFIED JWT (verified=true). The consumer key is logged
+  only as a SHA-256 fingerprint. attributes is a JSON object built by
+  JS-AuditAttributes from AccessEntity lookups (defaults to {}).
+-->
+<MessageLogging continueOnError="true" enabled="true" name="ML-AuditLargeOrder">
+  <DisplayName>ML-AuditLargeOrder</DisplayName>
+  <CloudLogging>
+    <LogName>projects/{organization.name}/logs/apigee-consumer-audit</LogName>
+    <Message contentType="application/json">{
+  "event": "order_limit_exceeded",
+  "timestamp": "{system.time}",
+  "epoch_ms": "{client.received.start.timestamp}",
+  "environment": "{environment.name}",
+  "proxy": "{apiproxy.name}",
+  "revision": "{apiproxy.revision}",
+  "correlation_id": "{escapeJSON(audit.correlation_id)}",
+  "consumer": {
+    "client_id": "{escapeJSON(audit.client_id)}",
+    "api_key_fp": "{audit.key_fp}",
+    "app": "{escapeJSON(audit.app)}",
+    "developer": "{escapeJSON(audit.developer_email)}",
+    "product": "{escapeJSON(audit.product)}",
+    "products_on_key": "{escapeJSON(audit.products)}",
+    "attributes": {audit.attributes_json}
+  },
+  "end_user": {
+    "sub": "{escapeJSON(audit.user.sub)}",
+    "username": "{escapeJSON(audit.user.username)}",
+    "email": "{escapeJSON(audit.user.email)}",
+    "name": "{escapeJSON(audit.user.name)}",
+    "scope": "{escapeJSON(audit.user.scope)}",
+    "role": "{audit.user.role}",
+    "jti": "{escapeJSON(audit.user.jti)}",
+    "verified": true
+  },
+  "request": {
+    "mcp_tool": "placeOrder",
+    "verb": "{request.verb}",
+    "path": "{escapeJSON(proxy.basepath)}{escapeJSON(proxy.pathsuffix)}",
+    "status": "422",
+    "client_ip": "{client.ip}"
+  },
+  "detail": {
+    "order_total": "{order.total_display}",
+    "order_max": "{order.max_display}",
+    "attributes_error": "{escapeJSON(audit.attributes_error)}"
+  }
+}</Message>
+    <!-- Labels are static (Cloud Logging labels are not template-resolved);
+         filter on jsonPayload.environment / jsonPayload.proxy instead. -->
+    <Labels>
+      <Label>
+        <Key>event</Key>
+        <Value>order_limit_exceeded</Value>
+      </Label>
+    </Labels>
+    <ResourceType>api</ResourceType>
+  </CloudLogging>
+</MessageLogging>

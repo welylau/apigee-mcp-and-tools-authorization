@@ -8,6 +8,19 @@
         <Name>JWT-VerifyToken</Name>
         <Condition>not (proxy.pathsuffix ~~ ".*(/location|/hours|/menu)$")</Condition>
       </Step>
+      <!-- AUDIT: verified end-user identity + role from the Keycloak JWT. -->
+      <Step>
+        <Name>AM-AuditEndUser</Name>
+        <Condition>jwt.JWT-VerifyToken.valid = true</Condition>
+      </Step>
+      <Step>
+        <Name>AM-AuditRoleCustomer</Name>
+        <Condition>(jwt.JWT-VerifyToken.valid = true) and (jwt.JWT-VerifyToken.claim.scope ~~ ".*\bbiscuit_coffee_customer\b.*")</Condition>
+      </Step>
+      <Step>
+        <Name>AM-AuditRoleManager</Name>
+        <Condition>(jwt.JWT-VerifyToken.valid = true) and (jwt.JWT-VerifyToken.claim.scope ~~ ".*\bbiscuit_coffee_manager\b.*")</Condition>
+      </Step>
       <Step>
         <Name>EV-GetId</Name>
       </Step>
@@ -21,6 +34,20 @@
     <Request/>
     <Response/>
   </PostFlow>
+  <!-- AUDIT: runs after the response is sent (no added latency), including on
+       fault paths. Writes to Cloud Logging log 'apigee-consumer-audit'. -->
+  <PostClientFlow name="PostClientFlow">
+    <Response>
+      <Step>
+        <Name>ML-AuditLargeOrder</Name>
+        <Condition>order.exceeds_limit = "true"</Condition>
+      </Step>
+      <Step>
+        <Name>ML-AuditJwtAccess</Name>
+        <Condition>jwt.JWT-VerifyToken.valid = true</Condition>
+      </Step>
+    </Response>
+  </PostClientFlow>
   <Flows>
     <Flow name="getStoreLocation">
       <Description>Get store address location</Description>
@@ -70,10 +97,31 @@
     </Flow>
     <Flow name="listOrders">
       <Description>List all orders</Description>
-      <Request/>
+      <!-- Pin the query to the caller.
+           The backend applies X-User-Email only as the LAST branch of an elif
+           chain, so a caller-supplied ?filter= / ?email= / ?name= /
+           ?loyalty_id= matches earlier and overrides identity entirely. The
+           constraint therefore has to be applied here, by removing those
+           parameters and writing back one the gateway controls.
+
+           Managers are exempt, so they keep the cross-customer view. -->
+      <Request>
+        <Step>
+          <Condition>!(jwt.JWT-VerifyToken.claim.scope ~~ ".*\bbiscuit_coffee_customer\b.*") and !(jwt.JWT-VerifyToken.claim.scope ~~ ".*\bbiscuit_coffee_manager\b.*")</Condition>
+          <Name>RF-Invalid-Scope</Name>
+        </Step>
+        <Step>
+          <Name>JS-OwnershipFlags</Name>
+        </Step>
+        <Step>
+          <Condition>order.pin_filter = "true"</Condition>
+          <Name>AM-PinOrderFilter</Name>
+        </Step>
+      </Request>
       <Response/>
       <Condition>(proxy.pathsuffix MatchesPath "/orders") and (request.verb = "GET")</Condition>
     </Flow>
+
     <Flow name="placeOrder">
       <Description>Place a new order</Description>
       <Request>
@@ -81,22 +129,141 @@
           <Condition>!(jwt.JWT-VerifyToken.claim.scope ~~ ".*\bbiscuit_coffee_customer\b.*")</Condition>
           <Name>RF-Invalid-Scope</Name>
         </Step>
+        <!-- Maximum order value, enforced at the gateway.
+             The request body carries no prices, so we price it here from the
+             same menu the backend uses (cached), then reject before the target
+             is called - meaning an over-limit order is never written to
+             Firestore. Only reached by biscuit_coffee_customer, since the scope
+             check above raises first. -->
+        <Step>
+          <Name>LC-MenuCache</Name>
+        </Step>
+        <Step>
+          <Condition>lookupcache.LC-MenuCache.cachehit = false</Condition>
+          <Name>SC-GetMenu</Name>
+        </Step>
+        <Step>
+          <Name>JS-CheckOrderValue</Name>
+        </Step>
+        <Step>
+          <Condition>lookupcache.LC-MenuCache.cachehit = false</Condition>
+          <Name>PC-MenuCache</Name>
+        </Step>
+        <!-- AUDIT: generic custom-attribute enumeration for the audit record,
+             only when the order is about to be rejected. All continueOnError,
+             so the 422 is unaffected. The app is keyed by the VERIFIED azp. -->
+        <Step>
+          <Condition>order.exceeds_limit = "true"</Condition>
+          <Name>AE-AuditApp</Name>
+        </Step>
+        <Step>
+          <Condition>order.exceeds_limit = "true"</Condition>
+          <Name>AE-AuditDeveloper</Name>
+        </Step>
+        <Step>
+          <Condition>order.exceeds_limit = "true"</Condition>
+          <Name>JS-AuditPrepare</Name>
+        </Step>
+        <Step>
+          <Condition>order.exceeds_limit = "true"</Condition>
+          <Name>AE-AuditProduct</Name>
+        </Step>
+        <Step>
+          <Condition>order.exceeds_limit = "true"</Condition>
+          <Name>JS-AuditAttributes</Name>
+        </Step>
+        <Step>
+          <Condition>order.exceeds_limit = "true"</Condition>
+          <Name>RF-Order-Limit-Exceeded</Name>
+        </Step>
       </Request>
-      <Response/>
+      <Response>
+        <!-- Tell the customer what the order cost and what its ID is.
+             The backend supplies the figures; the sentence itself is composed
+             here so the gateway owns the customer-facing wording, exactly as it
+             does for the order-limit and quota refusals.
+             Gated on 200 so failure responses pass through untouched. -->
+        <Step>
+          <Condition>response.status.code = 200</Condition>
+          <Name>EV-OrderResult</Name>
+        </Step>
+        <Step>
+          <Condition>response.status.code = 200</Condition>
+          <Name>JS-FormatOrderConfirmation</Name>
+        </Step>
+        <Step>
+          <Condition>(response.status.code = 200) and (order.confirmation_ok = "true")</Condition>
+          <Name>AM-OrderConfirmation</Name>
+        </Step>
+      </Response>
       <Condition>(proxy.pathsuffix MatchesPath "/orders") and (request.verb = "POST")</Condition>
     </Flow>
     <Flow name="getOrder">
       <Description>Retrieve a specific order</Description>
-      <Request/>
-      <Response/>
+      <!-- Object-level authorisation, checked on the way OUT.
+           A read is non-destructive, so the target call is itself the
+           ownership lookup and the check costs no extra backend call. If it
+           fails, the response is discarded and replaced by RF-Order-Not-Found,
+           so nothing leaks. Contrast cancelOrder below, which cannot do this. -->
+      <Request>
+        <Step>
+          <Condition>!(jwt.JWT-VerifyToken.claim.scope ~~ ".*\bbiscuit_coffee_customer\b.*") and !(jwt.JWT-VerifyToken.claim.scope ~~ ".*\bbiscuit_coffee_manager\b.*")</Condition>
+          <Name>RF-Invalid-Scope</Name>
+        </Step>
+        <Step>
+          <Name>JS-OwnershipFlags</Name>
+        </Step>
+      </Request>
+      <Response>
+        <Step>
+          <Condition>order.needs_lookup = "true"</Condition>
+          <Name>JS-OwnershipResponse</Name>
+        </Step>
+        <Step>
+          <Condition>order.ownership_ok = "false"</Condition>
+          <Name>RF-Order-Not-Found</Name>
+        </Step>
+      </Response>
       <Condition>(proxy.pathsuffix MatchesPath "/orders/{order_id}") and (request.verb = "GET")</Condition>
     </Flow>
     <Flow name="cancelOrder">
       <Description>Cancel an existing order</Description>
-      <Request/>
+      <!-- Object-level authorisation, checked on the way IN.
+           You cannot un-delete, so ownership has to be established before the
+           target is called. SC-GetOrderOwner fetches the order first and
+           JS-OwnershipLookup decides; an order that is not yours is refused
+           without the backend ever seeing the DELETE.
+
+           JS-OwnershipFlags runs first so that managers and the disabled state
+           skip the callout entirely rather than paying for a lookup whose
+           result they would ignore. It also seeds ownership_ok = "false", so
+           if the callout or the lookup step is ever skipped the RaiseFault
+           still fires - the safe state is the default. -->
+      <Request>
+        <Step>
+          <Condition>!(jwt.JWT-VerifyToken.claim.scope ~~ ".*\bbiscuit_coffee_customer\b.*") and !(jwt.JWT-VerifyToken.claim.scope ~~ ".*\bbiscuit_coffee_manager\b.*")</Condition>
+          <Name>RF-Invalid-Scope</Name>
+        </Step>
+        <Step>
+          <Name>JS-OwnershipFlags</Name>
+        </Step>
+        <Step>
+          <Condition>order.needs_lookup = "true"</Condition>
+          <Name>SC-GetOrderOwner</Name>
+        </Step>
+        <Step>
+          <Condition>order.needs_lookup = "true"</Condition>
+          <Name>JS-OwnershipLookup</Name>
+        </Step>
+        <Step>
+          <Condition>order.ownership_ok = "false"</Condition>
+          <Name>RF-Order-Not-Found</Name>
+        </Step>
+      </Request>
       <Response/>
       <Condition>(proxy.pathsuffix MatchesPath "/orders/{order_id}") and (request.verb = "DELETE")</Condition>
     </Flow>
+
   </Flows>
   <HTTPProxyConnection>
     <BasePath>/biscuit-coffee</BasePath>

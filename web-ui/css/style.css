@@ -851,8 +851,9 @@ body.is-resizing-sidebar iframe {
 
 .spec-title-row {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
+  gap: 8px;
   margin-bottom: 10px;
   padding-bottom: 8px;
   border-bottom: 1px solid var(--border-subtle);
@@ -860,13 +861,14 @@ body.is-resizing-sidebar iframe {
 
 .spec-role-label {
   display: flex;
-  align-items: center;
-  gap: 6px;
+  align-items: flex-start;
+  gap: 8px;
   font-size: 13px;
   font-weight: 700;
 }
 
 .spec-role-label.public {
+  align-items: center;
   color: var(--google-blue);
 }
 
@@ -876,6 +878,24 @@ body.is-resizing-sidebar iframe {
 
 .spec-role-label.manager {
   color: var(--role-manager);
+}
+
+.spec-role-titles {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.spec-role-name {
+  line-height: 1.25;
+}
+
+.spec-role-email {
+  font-size: 11px;
+  font-weight: 400;
+  font-family: var(--font-mono, monospace);
+  color: var(--text-muted);
+  line-height: 1.25;
 }
 
 .spec-prompts-section {
@@ -1384,6 +1404,21 @@ body.is-resizing-sidebar iframe {
   border: 1px solid var(--danger-border);
 }
 
+/* Business-policy rejections (rate limit, maximum order value).
+   Deliberately amber rather than red: the gateway worked exactly as intended,
+   so this should not read as a security failure or an outage. */
+.tool-status-tag.policy-blocked {
+  background: var(--warning-bg);
+  color: var(--warning);
+  border: 1px solid var(--warning-border);
+}
+
+[data-theme="dark"] .tool-status-tag.policy-blocked {
+  background: rgba(217, 119, 6, 0.18);
+  color: #fbbf24;
+  border: 1px solid rgba(251, 191, 36, 0.35);
+}
+
 .tool-status-tag.auth-required {
   background: rgba(234, 67, 53, 0.12);
   color: #ea4335;
@@ -1518,6 +1553,30 @@ body.is-resizing-sidebar iframe {
 @keyframes typingBounce {
   0%, 80%, 100% { transform: scale(0); opacity: 0.3; }
   40% { transform: scale(1); opacity: 1; }
+}
+
+/* Streaming: live status line ("Calling getMenu via Apigee…") and text caret */
+.typing-status {
+  margin-top: 6px;
+  font-size: 11.5px;
+  color: var(--text-secondary);
+}
+.typing-status code {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  background: var(--bg-tertiary);
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+.msg-bubble.streaming::after {
+  content: '▍';
+  margin-left: 2px;
+  color: var(--google-blue);
+  animation: streamCaret 1s steps(1) infinite;
+}
+@keyframes streamCaret { 50% { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .msg-bubble.streaming::after { animation: none; }
 }
 
 /* CHAT INPUT CONTAINER */

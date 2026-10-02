@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!--
+  Computes caller identity, the manager bypass and the enforcement toggle, and
+  decides whether a per-order ownership lookup is needed at all.
+
+  Runs FIRST on every protected order flow, for two reasons:
+    * managers and the disabled state can then skip the ServiceCallout, so the
+      bypass costs nothing rather than a wasted backend round trip;
+    * it derives order.id from the path, which SC-GetOrderOwner needs before
+      any other policy has run.
+
+  It also seeds order.ownership_ok = "false" whenever a lookup is required, so
+  that if the lookup step is ever skipped or removed the RaiseFault still
+  fires. The safe state is the default, not the consequence of a later step.
+-->
+<Javascript continueOnError="false" enabled="true" timeLimit="200" name="JS-OwnershipFlags">
+  <DisplayName>JS-OwnershipFlags</DisplayName>
+  <Properties>
+    <Property name="mode">flags</Property>
+  </Properties>
+  <ResourceURL>jsc://checkOrderOwnership.js</ResourceURL>
+</Javascript>

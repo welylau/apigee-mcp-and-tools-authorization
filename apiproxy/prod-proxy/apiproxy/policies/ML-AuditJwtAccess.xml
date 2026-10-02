@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!--
+  AUDIT LOGGING - JWT access record for EVERY authenticated call
+  (event jwt_access): who (verified end user + role + scope), through which
+  client (azp / key fingerprint), what (verb + path) and the outcome (status).
+
+  PostClientFlow, gated on jwt.JWT-VerifyToken.valid = true, so public paths
+  (/menu, /hours, /location) without a token are not logged.
+-->
+<MessageLogging continueOnError="true" enabled="true" name="ML-AuditJwtAccess">
+  <DisplayName>ML-AuditJwtAccess</DisplayName>
+  <CloudLogging>
+    <LogName>projects/{organization.name}/logs/apigee-consumer-audit</LogName>
+    <Message contentType="application/json">{
+  "event": "jwt_access",
+  "timestamp": "{system.time}",
+  "epoch_ms": "{client.received.start.timestamp}",
+  "environment": "{environment.name}",
+  "proxy": "{apiproxy.name}",
+  "revision": "{apiproxy.revision}",
+  "correlation_id": "{escapeJSON(audit.correlation_id)}",
+  "consumer": {
+    "client_id": "{escapeJSON(audit.client_id)}",
+    "api_key_fp": "{audit.key_fp}"
+  },
+  "end_user": {
+    "sub": "{escapeJSON(audit.user.sub)}",
+    "username": "{escapeJSON(audit.user.username)}",
+    "email": "{escapeJSON(audit.user.email)}",
+    "name": "{escapeJSON(audit.user.name)}",
+    "scope": "{escapeJSON(audit.user.scope)}",
+    "role": "{audit.user.role}",
+    "jti": "{escapeJSON(audit.user.jti)}",
+    "verified": true
+  },
+  "request": {
+    "verb": "{request.verb}",
+    "path": "{escapeJSON(proxy.basepath)}{escapeJSON(proxy.pathsuffix)}",
+    "status": "{firstnonnull(response.status.code,error.status.code,message.status.code)}",
+    "client_ip": "{client.ip}"
+  }
+}</Message>
+    <!-- Labels are static (Cloud Logging labels are not template-resolved);
+         filter on jsonPayload.environment / jsonPayload.proxy instead. -->
+    <Labels>
+      <Label>
+        <Key>event</Key>
+        <Value>jwt_access</Value>
+      </Label>
+    </Labels>
+    <ResourceType>api</ResourceType>
+  </CloudLogging>
+</MessageLogging>

@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!--
+  Rejects an order whose value exceeds the configured cap, before it reaches the
+  backend - so no Firestore document is written and no compensating delete is needed.
+
+  Shape matches RF-Invalid-Scope ({error, message}) because that is what the managed
+  MCP service already wraps into a tool result. Verified behaviour: a 4xx from this
+  proxy surfaces to the agent as HTTP 200 + CallToolResult{isError:true} whose text
+  is this JSON body verbatim, so `message` is what the customer ultimately hears.
+
+  Both figures are injected from JS-CheckOrderValue, so the limit is defined in
+  exactly one place (that policy's maxOrderAmount property). `$` is a literal here;
+  only {order.*} is substituted.
+
+  422 is used rather than 400 because the request is well-formed - it simply breaches
+  a business rule.
+-->
+<RaiseFault continueOnError="false" enabled="true" name="RF-Order-Limit-Exceeded">
+  <DisplayName>RF-Order-Limit-Exceeded</DisplayName>
+  <FaultResponse>
+    <Set>
+      <Headers>
+        <Header name="Content-Type">application/json</Header>
+      </Headers>
+      <Payload contentType="application/json">{
+  "error": "order_limit_exceeded",
+  "message": "This order comes to ${order.total_display}, which is above the ${order.max_display} limit we can accept online. Please visit the shop to place a large order with our staff."
+}</Payload>
+      <StatusCode>422</StatusCode>
+      <ReasonPhrase>Unprocessable Entity</ReasonPhrase>
+    </Set>
+  </FaultResponse>
+</RaiseFault>

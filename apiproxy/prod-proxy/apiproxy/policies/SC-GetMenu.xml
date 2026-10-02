@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!--
+  Fetches the live menu (with prices) from the Cloud Run backend on a cache miss.
+
+  Uses the same GoogleIDToken authentication as targets/default.xml, because the
+  backend is a private Cloud Run service.
+
+  continueOnError is true deliberately: if the menu cannot be fetched, the order
+  must not be blocked. checkOrderValue.js then falls back to the same default
+  item price the backend uses, which errs towards allowing the order through
+  rather than rejecting a legitimate customer.
+-->
+<ServiceCallout continueOnError="true" enabled="true" name="SC-GetMenu">
+  <DisplayName>SC-GetMenu</DisplayName>
+  <Request clearPayload="true" variable="menuRequest">
+    <Set>
+      <Verb>GET</Verb>
+      <Path>/menu</Path>
+    </Set>
+    <IgnoreUnresolvedVariables>true</IgnoreUnresolvedVariables>
+  </Request>
+  <Response>menuResponse</Response>
+  <Timeout>5000</Timeout>
+  <HTTPTargetConnection>
+    <Authentication>
+      <GoogleIDToken>
+        <Audience>https://biscuit-coffee-backend-YOUR_GCP_PROJECT_NUMBER.asia-southeast1.run.app</Audience>
+      </GoogleIDToken>
+    </Authentication>
+    <URL>https://biscuit-coffee-backend-YOUR_GCP_PROJECT_NUMBER.asia-southeast1.run.app</URL>
+  </HTTPTargetConnection>
+</ServiceCallout>

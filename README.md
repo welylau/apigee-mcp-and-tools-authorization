@@ -277,7 +277,6 @@ The demo includes a modern, responsive web application designed with the **Googl
 │
 └── docs/                                 # Architectural documentation & visual assets
     ├── architecture_diagram.png          # High-resolution architectural diagram
-    ├── architecture_diagram.jpg
     └── webui-screenshot.png              # Live web application interface screenshot
 ```
 
@@ -379,7 +378,7 @@ Edit `.env` with your project and environment details:
 GOOGLE_GENAI_USE_VERTEXAI="TRUE"
 GOOGLE_CLOUD_PROJECT="your-gcp-project-id"
 GOOGLE_CLOUD_LOCATION="asia-southeast1"
-MODEL_NAME="gemini-2.5-flash"
+MODEL_NAME="gemini-3.5-flash-lite"
 
 # Apigee Environment & Hostname
 APIGEE_PROD_ENV="prod-env"

@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!--
+  AUDIT LOGGING - from the app entity, lists the products bound to the caller's
+  key and selects audit.product (X-Audit-Product hint accepted only if it is
+  one of them). Large-order rejection path only. continueOnError=true.
+-->
+<Javascript continueOnError="true" enabled="true" timeLimit="200" name="JS-AuditPrepare">
+  <DisplayName>JS-AuditPrepare</DisplayName>
+  <Properties>
+    <Property name="stage">prepare</Property>
+    <Property name="appVar">AccessEntity.AE-AuditApp</Property>
+  </Properties>
+  <ResourceURL>jsc://auditAttributes.js</ResourceURL>
+</Javascript>

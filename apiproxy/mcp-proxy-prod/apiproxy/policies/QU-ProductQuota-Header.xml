@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!--
+  Mirror of QU-ProductQuota for the unauthenticated / header-only path, where the
+  API key arrives in the 'x-api-key' header and is verified by VA-VerifyKey-Header.
+
+  UseQuotaConfigInAPIProduct must reference the exact VerifyAPIKey step that
+  resolved the product, hence this second policy.
+-->
+<Quota continueOnError="false" enabled="true" name="QU-ProductQuota-Header">
+  <DisplayName>QU-ProductQuota-Header</DisplayName>
+  <!-- Counter is tracked per developer app (biscuit-coffee-agent-app) -->
+  <Identifier ref="client_id"/>
+  <UseQuotaConfigInAPIProduct stepName="VA-VerifyKey-Header">
+    <DefaultConfig>
+      <Allow>10000</Allow>
+      <Interval>1</Interval>
+      <TimeUnit>hour</TimeUnit>
+    </DefaultConfig>
+  </UseQuotaConfigInAPIProduct>
+  <!-- Distributed + Synchronous gives accurate counting across message processors -->
+  <Distributed>true</Distributed>
+  <Synchronous>true</Synchronous>
+</Quota>
