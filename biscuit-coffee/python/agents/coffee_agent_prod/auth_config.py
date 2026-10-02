@@ -1,8 +1,15 @@
+import os
+
+from dotenv import load_dotenv
 from fastapi.openapi.models import OAuth2, OAuthFlowAuthorizationCode, OAuthFlows
 from google.adk.auth import AuthCredential, AuthCredentialTypes, OAuth2Auth
 
-CLIENT_ID="biscuit-coffee-agent"
-CLIENT_SECRET="YOUR_KEYCLOAK_CLIENT_SECRET"
+load_dotenv()
+
+CLIENT_ID = os.getenv("KEYCLOAK_CLIENT_ID", "biscuit-coffee-agent")
+# Never hardcode the client secret. It comes from the environment: Secret
+# Manager on Cloud Run (see scripts/deploy-ui.sh), the gitignored root .env locally.
+CLIENT_SECRET = os.getenv("KEYCLOAK_CLIENT_SECRET", "")
 
 auth_scheme = OAuth2(
     flows=OAuthFlows(
