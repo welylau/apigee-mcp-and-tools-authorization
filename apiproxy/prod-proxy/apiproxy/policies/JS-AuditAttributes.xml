@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!--
+  AUDIT LOGGING - flattens app / product / operation custom attributes into
+  audit.attributes_json and fills app name + developer email.
+  Large-order rejection path only. continueOnError=true.
+  `tool` is fixed to placeOrder: this proxy is REST, the only rejection path
+  that enumerates attributes is POST /orders (MCP tool placeOrder).
+-->
+<Javascript continueOnError="true" enabled="true" timeLimit="200" name="JS-AuditAttributes">
+  <DisplayName>JS-AuditAttributes</DisplayName>
+  <Properties>
+    <Property name="stage">final</Property>
+    <Property name="appVar">AccessEntity.AE-AuditApp</Property>
+    <Property name="productVar">AccessEntity.AE-AuditProduct</Property>
+    <Property name="developerVar">AccessEntity.AE-AuditDeveloper</Property>
+    <Property name="tool">placeOrder</Property>
+  </Properties>
+  <ResourceURL>jsc://auditAttributes.js</ResourceURL>
+</Javascript>

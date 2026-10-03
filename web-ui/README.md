@@ -22,7 +22,7 @@ A modern, responsive web application designed to host and showcase the **Biscuit
 
 The application demonstrates **Role-Based Tool Authorization** enforced at the API Gateway level by Apigee.
 
-| Feature / Operation | Apigee Flow & Endpoint | Customer (`customer@biscuit-coffee.com`) | Store Manager (`manager@biscuit-coffee.com`) |
+| Feature / Operation | Apigee Flow & Endpoint | Customer (`customer@biscuit-coffee.com` / `customer2@biscuit-coffee.com`) | Store Manager (`manager@biscuit-coffee.com`) |
 | :--- | :--- | :---: | :---: |
 | **Active OAuth Scope** | Token Claims | `biscuit_coffee_customer` | `biscuit_coffee_customer`, `biscuit_coffee_manager` |
 | **Browse Menu & Pricing** | `GET /menu` (Public) | ✅ **Allowed** | ✅ **Allowed** |
@@ -60,6 +60,7 @@ Click any of the suggested prompt chips in the UI or copy them into the chat:
 - *"I'd like to order a Latte and a warm Biscuit"*
 - *"Can you show my saved payment methods?"*
 - *"What is the status of my order #ord-8921?"*
+- *"Show all of my orders"*
 
 ### 👔 Store Manager Prompts
 - *"List all store employees, their contact emails and shifts"*

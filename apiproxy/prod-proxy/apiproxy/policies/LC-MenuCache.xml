@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!--
+  Looks for a cached copy of the menu price list.
+
+  The $100 order cap has to price the order itself, because the inbound
+  POST /orders body carries only item_id + quantity (the backend derives
+  total_amount from Firestore). Rather than duplicating prices into Apigee, we
+  read them from the same source of truth and cache them briefly.
+
+  On a miss, SC-GetMenu fetches and PC-MenuCache stores.
+-->
+<LookupCache continueOnError="true" enabled="true" name="LC-MenuCache">
+  <DisplayName>LC-MenuCache</DisplayName>
+  <CacheKey>
+    <KeyFragment>biscuit-menu-prices</KeyFragment>
+  </CacheKey>
+  <Scope>Application</Scope>
+  <AssignTo>menu.json</AssignTo>
+</LookupCache>

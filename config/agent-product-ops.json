@@ -1,6 +1,17 @@
 {
+    "attributes": [
+        {
+            "name": "access",
+            "value": "public"
+        },
+        {
+            "name": "enforceOrderOwnership",
+            "value": "true"
+        }
+    ],
     "payloadOperationGroup": {
         "operationConfigs": [
+
             {
                 "apiSource": "mcp-proxy-prod",
                 "operations": [
@@ -53,7 +64,17 @@
                         "operation": "tools/call/placeOrder"
                     }
                 ],
-                "quota": {}
+                "quota": {
+                    "limit": "3",
+                    "interval": "1",
+                    "timeUnit": "minute"
+                },
+                "attributes": [
+                    {
+                        "name": "maxOrderAmount",
+                        "value": "100"
+                    }
+                ]
             },
             {
                 "apiSource": "mcp-proxy-prod",

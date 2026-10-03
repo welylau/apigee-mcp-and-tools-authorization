@@ -222,6 +222,11 @@ The demo includes a modern, responsive web application designed with the **Googl
 5. **Dual-Engine Flexibility**:
    * **Live ADK Mode**: Connects directly to the local Python ADK runtime (`http://localhost:8000`).
    * **Showcase Simulator Mode**: Built-in offline mock engine allowing full presentations even without active cloud connectivity.
+6. **Settings Panel (Hosting & Consumer Audit)**:
+   * Shows where the UI runs and what it talks to: Apigee proxies, deployments, API products, developer apps and the Cloud Run backend.
+   * Consumer audit dashboard built from the `apigee-consumer-audit` Cloud Logging log, with filters and paging.
+   * Read-only and fetched server-side with Application Default Credentials. E-mail addresses are masked and API keys appear only as SHA-256 fingerprints.
+7. **Guided Tour**: Step-by-step missions (architecture, guest access, login wall, customer and manager flows) that walk presenters through the demo.
 
 ---
 
@@ -229,6 +234,7 @@ The demo includes a modern, responsive web application designed with the **Googl
 
 ```
 .
+├── .agents/rules/                        # Agent guardrails (GitHub push workflow, Cloud Run deploys)
 ├── .env.example                          # Template environment configuration file
 ├── .gitignore                            # Git exclusion rules (secrets, local environments)
 ├── README.md                             # Comprehensive project documentation
@@ -260,24 +266,29 @@ The demo includes a modern, responsive web application designed with the **Googl
 │   └── main.py                           # Coffee shop REST endpoints & seed data
 │
 ├── keycloak-config/                      # Identity Provider Configuration
-│   └── setup_apigee_realm.sh             # Automated realm, client, scopes & demo users script
+│   ├── setup_apigee_realm.sh             # Automated realm, client, scopes & demo users script
+│   └── setup_dev_client.sh               # Creates the isolated dev client (biscuit-coffee-agent-dev)
 │
 ├── scripts/                              # Deployment and Administration Automation
 │   ├── deploy-apigee.sh                  # Deploys proxies, products, apps via apigeecli
+│   ├── deploy-apigee-dev.sh              # Deploys to the isolated dev environment only (never prod)
 │   ├── deploy-backend.sh                 # Builds and deploys backend to Cloud Run
-│   ├── deploy-ui.sh                      # Deploys web UI to Cloud Run
+│   ├── deploy-ui.sh                      # Deploys web UI to Cloud Run (env vars + Secret Manager)
+│   ├── deploy-adk.sh                     # Deploys the standalone ADK web service to Cloud Run
+│   ├── test-dev-audit.py                 # Dev-environment test harness (quota, large order, roles)
 │   └── undeploy-apigee.sh                # Cleans up Apigee proxies and developer apps
 │
 ├── web-ui/                               # Demonstration Web Application
 │   ├── index.html                        # Split-panel single page application
 │   ├── server.py                         # Python proxy server (ports 3000 -> 8000)
-│   ├── css/                              # Artisanal dark theme styling
-│   ├── js/                               # Agent client, persona manager, UI controller
+│   ├── settings_api.py                   # Server-side data for the Settings panel (hosting + audit logs)
+│   ├── css/                              # Artisanal dark theme, settings & tour styling
+│   ├── js/                               # Agent client, persona manager, UI controller, settings panel
+│   │   └── tour/                         # Guided tour engine & missions
 │   └── assets/                           # Diagrams, logos, and graphics
 │
 └── docs/                                 # Architectural documentation & visual assets
     ├── architecture_diagram.png          # High-resolution architectural diagram
-    ├── architecture_diagram.jpg
     └── webui-screenshot.png              # Live web application interface screenshot
 ```
 
@@ -359,7 +370,8 @@ Before running the deployment scripts, ensure your GCP project satisfies:
      aiplatform.googleapis.com \
      run.googleapis.com \
      firestore.googleapis.com \
-     compute.googleapis.com
+     compute.googleapis.com \
+     secretmanager.googleapis.com
    ```
 
 ---
@@ -379,7 +391,7 @@ Edit `.env` with your project and environment details:
 GOOGLE_GENAI_USE_VERTEXAI="TRUE"
 GOOGLE_CLOUD_PROJECT="your-gcp-project-id"
 GOOGLE_CLOUD_LOCATION="asia-southeast1"
-MODEL_NAME="gemini-2.5-flash"
+MODEL_NAME="gemini-3.5-flash-lite"
 
 # Apigee Environment & Hostname
 APIGEE_PROD_ENV="prod-env"
@@ -388,6 +400,10 @@ APIGEE_PROD_HOSTNAME="prod.your-apigee-domain.com"
 # Agent Registry & ADK
 AGENT_REGISTRY_LOCATION="global"
 ADK_ENABLE_MCP_GRACEFUL_ERROR_HANDLING="true"
+
+# Keycloak OAuth client secret (local runs only; never commit it).
+# Get it from the Keycloak admin console after Step 2.
+KEYCLOAK_CLIENT_SECRET="<your-keycloak-client-secret>"
 ```
 
 Source your configuration:
@@ -419,6 +435,7 @@ bash ./keycloak-config/setup_apigee_realm.sh
 > 3. OAuth 2.0 Client: `biscuit-coffee-agent`
 > 4. Customer User: `customer@biscuit-coffee.com` (password: `ilovecoffee`) with customer scope.
 > 5. Store Manager User: `manager@biscuit-coffee.com` (password: `ilovecoffee`) with customer + manager scopes.
+> 6. Extra Customer Users: `customer2@biscuit-coffee.com` (Michael, used by the tour's order-ownership mission) and `customer3@biscuit-coffee.com` (password: `ilovecoffee`) with customer scope.
 
 ---
 
@@ -479,6 +496,37 @@ python3 server.py 3000
 
 Open your browser and navigate to **`http://localhost:3000`**.
 The web interface will automatically detect the ADK runtime on port 8000 and display the green **ADK Web Live** status indicator.
+
+---
+
+### Step 7 (Optional): Deploy the Web UI to Cloud Run
+
+On Cloud Run the UI reads the Keycloak client secret from **Secret Manager**. It is never built into the image or kept in `web-ui/.env`. Create the secret once and let the UI's runtime service account read it:
+
+```bash
+# 1. Store the client secret (read from stdin so it never lands in shell history)
+read -rs KC_SECRET && printf '%s' "$KC_SECRET" | \
+  gcloud secrets create keycloak-client-secret \
+    --project="$GOOGLE_CLOUD_PROJECT" --replication-policy=automatic --data-file=-
+unset KC_SECRET
+
+# 2. Grant read access to the UI's runtime service account (default: the Compute Engine default SA)
+gcloud secrets add-iam-policy-binding keycloak-client-secret \
+  --project="$GOOGLE_CLOUD_PROJECT" \
+  --member="serviceAccount:<PROJECT_NUMBER>-compute@developer.gserviceaccount.com" \
+  --role=roles/secretmanager.secretAccessor
+```
+
+Then create `web-ui/.env` with the same non-secret keys as `.env.example`. **Do not put secrets in it.** Deploy:
+```bash
+bash ./scripts/deploy-ui.sh
+```
+
+> [!NOTE]
+> `deploy-ui.sh` applies `web-ui/.env` as the service's env vars (`--env-vars-file`, which replaces existing plain env vars) and mounts `KEYCLOAK_CLIENT_SECRET` from `keycloak-client-secret:latest`. It refuses keys in `web-ui/.env` that look like secrets. To rotate the secret, add a new version with `gcloud secrets versions add keycloak-client-secret --data-file=-` and redeploy.
+
+> [!TIP]
+> **Isolated dev environment:** `keycloak-config/setup_dev_client.sh`, `scripts/deploy-apigee-dev.sh` and `scripts/test-dev-audit.py` deploy and test changes (e.g. audit logging) in the dev environment without touching production. See each script's header for options.
 
 ---
 

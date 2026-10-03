@@ -1,113 +1,190 @@
+import json
 import os
+import re
+from typing import Any, Optional
+
 from dotenv import load_dotenv
 from google.adk.agents import Agent
-from google.adk.auth import AuthConfig, AuthCredential, AuthCredentialTypes, OAuth2Auth
-from google.adk.models.apigee_llm import ApigeeLlm
-from google.adk.tools.openapi_tool.auth.auth_helpers import dict_to_auth_scheme
+from google.adk.agents.readonly_context import ReadonlyContext
+from google.adk.tools.base_tool import BaseTool
+from google.adk.tools.tool_context import ToolContext
+from google.genai import types as genai_types
+
 from .tools import mcp_toolset, get_current_time
-from .auth_config import CLIENT_ID
 
 load_dotenv()
 
-MODEL_ID=os.getenv("MODEL_NAME")
+MODEL_ID = os.getenv("MODEL_NAME")
 
-# APIGEE_HOSTNAME = os.getenv("APIGEE_HOSTNAME")
-# APIGEE_LLM = os.getenv("APIGEE_LLM")
+# To route the model through an Apigee LLM proxy instead of calling Vertex AI
+# directly, wrap it with google.adk.models.apigee_llm.ApigeeLlm, e.g.
+#   model = ApigeeLlm(model=f"apigee/{MODEL_ID}",
+#                     proxy_url=f"https://{APIGEE_HOSTNAME}{APIGEE_LLM}",
+#                     custom_headers={"x-api-key": CLIENT_ID})
 
-# Instantiate the ApigeeLlm wrapper
-# model = ApigeeLlm(
-#     model=f"apigee/{MODEL_ID}",
-#     proxy_url=f"https://{APIGEE_HOSTNAME}{APIGEE_LLM}",
-#     custom_headers={"x-api-key": CLIENT_ID}
-# )
+# ---------------------------------------------------------------------------
+# Latency: Gemini 3.x thinks by default (~300-400 thought tokens, ~3.5 s per
+# call) and a tool turn makes two model calls. This agent only routes simple
+# tool calls, so "minimal" thinking keeps quality while cutting each call to
+# ~1 s. Override with MODEL_THINKING_LEVEL=low|medium|high, or set it empty to
+# use the model default. Only applied to Gemini 3.x (2.x uses thinking_budget).
+# ---------------------------------------------------------------------------
+THINKING_LEVEL = os.getenv("MODEL_THINKING_LEVEL", "minimal").strip().lower()
+GENERATE_CONTENT_CONFIG = None
+if THINKING_LEVEL and str(MODEL_ID or "").startswith("gemini-3"):
+    GENERATE_CONTENT_CONFIG = genai_types.GenerateContentConfig(
+        thinking_config=genai_types.ThinkingConfig(thinking_level=THINKING_LEVEL)
+    )
 
-model = MODEL_ID
+BASE_INSTRUCTION = """You are the Biscuit Coffee customer service assistant. Use your tools to:
+- show the menu, store location and opening hours (getMenu, getStoreLocation, getHoursOfOperation),
+- sign customers up for loyalty rewards and check their balance (getRewardBalance),
+- place, look up and cancel orders,
+- let store managers list employees (listEmployees).
 
-from google.adk.agents.readonly_context import ReadonlyContext
+How to respond:
+- NEVER answer from memory. Menu items, prices, store location, hours, rewards, orders and staff
+  come only from a tool result: call the matching tool on every such question, even if you
+  answered it earlier in the conversation. You know nothing about Biscuit Coffee without tools.
+- Greet the user once at the start of the conversation.
+- Menu: summarise the getMenu result in at most 6 short bullets. Give sizes and prices only when
+  asked or when the user asks about a specific drink.
+- Orders can be placed or looked up by loyalty ID, email address, or first name + last initial.
+  Describe order items by name, never by item ID.
+- Keep replies short. End with "Is there anything else I can help you with?"
 
-BASE_INSTRUCTION = """You are the main customer service assistant and your job is to help users with their requests. You can help do the following:
-   - Help users sign up for loyalty rewards, and check their reward balance.
-   - Provide information about hours of operation, the store location, or answer questions about the menu.
-   - Place orders, lookup existing orders, and cancel orders.
-   - Help store managers list employees or view employee information (using the listEmployees tool).
-   Use the tools provided to you to fulfill the user's request. Important: All API operations are provided via an MCP proxy. When invoking any tool, you must use the mcp_proxy_ prefix (for example, use mcp_proxy_getStoreLocation instead of getStoreLocation).
+Authorization is enforced by the Apigee gateway, not by you:
+- When a logged-in user asks for something, call the matching tool. Never refuse on your own
+  or pre-judge their permissions.
+- If a tool returns a JSON body with a "message" field, or an error like
+  "MCP tool execution failed: <sentence>", reply with that sentence exactly as written and
+  nothing else. Do not reword it, add an apology, show JSON or status codes, call it a
+  technical issue, retry, or work around the rule (e.g. by splitting an order).
+- For "order_not_found", never speculate about why, and never suggest the order may belong to
+  someone else.
+- When an order succeeds, include the tool's confirmation "message" exactly as written and do
+  not restate the price or order ID yourself."""
 
-    Steps:
-    - If you haven't already greeted the user, welcome them to Biscuit Coffee, and ask how you can help.
-    - If the user asks to list employees or view staff details, use the mcp_proxy_listEmployees tool. If the API returns a permission or scope error, or if access is forbidden, explain that Store Manager permissions (biscuit_coffee_manager) are required to access employee records. If the user is currently logged in as a customer, instruct them to log out first using the 'Logout' button on the left panel before logging in with Store Manager credentials (manager@biscuit-coffee.com).
-    - If they ask to place an order:
-        1. First ask if they are a loyalty rewards member. 
-        2. If they're not a loyalty rewards member, offer to sign them up.
-        3. If they are already, thank them by their first name for being a loyal customer.
-        4. If they want to sign up for loyalty, complete that before continuing. You will need their email address.
-    - Orders can be placed or looked up using either a loyalty rewards ID, an email address, or their first name and last initial.
-    - If they ask about the specific items in an order, give them the descriptions of the items, not the item IDs.
-    - If they ask about their loyalty rewards balance, use their authenticated email address with mcp_proxy_getRewardBalance.
-    - If they ask general question about hours of operation, store location, or the menu, you don't need to collect their email address.
-    - If they ask about the menu, just summarize the items. If they ask follow up questions about sizes or price of each item you can provide it.
-    
-    After the user's request has been answered, ask if there's anything else you can do to help.
-    When the user doesn't need anything else, politely thank them for visiting Biscuit Coffee."""
+USER_CONTEXT = {
+    "manager": """
+CURRENT USER: logged in via Keycloak as STORE MANAGER {name} ({email}).
+Scopes: biscuit_coffee_customer, biscuit_coffee_manager.
+- Use listEmployees for staff questions.
+- For rewards and order lookups, pass '{email}' as the email; never ask for it.""",
+    "customer": """
+CURRENT USER: logged in via Keycloak as CUSTOMER {name} ({email}). Scope: biscuit_coffee_customer.
+- For rewards and order lookups, pass '{email}' as the email; never ask for it.
+- Staff / employee questions: you MUST still call listEmployees (Apigee decides). Only if it
+  returns a permission, scope or forbidden error, reply: "I'm sorry, {first}, but viewing store
+  employee information requires Store Manager permissions (biscuit_coffee_manager). Your current
+  account is authenticated as a Customer ({email}). Please log out first using the 'Logout'
+  button on the left panel, and then log in with Store Manager credentials
+  (manager@biscuit-coffee.com).\"""",
+    "guest": """
+CURRENT USER: guest, not logged in.
+- Menu, location and hours: use the public tools directly; do not ask them to log in.
+- Orders, order lookups and loyalty rewards: do NOT call a tool. Politely explain that this
+  requires signing in and invite them to click the 'Login' button.
+- Staff / employee questions: do NOT call a tool. Explain that employee records require Store
+  Manager authorization (biscuit_coffee_manager) and invite them to log in with
+  manager@biscuit-coffee.com.""",
+}
+
+DEFAULT_NAMES = {"manager": "Alice", "customer2": "Michael Bosh", "customer": "John Smith"}
+
 
 def get_instruction(context: ReadonlyContext) -> str:
-    user_id = str(context.user_id or "")
     state = context.session.state or {}
-    email = str(state.get("user_email") or user_id)
-    name = state.get("user_name")
+    email = str(state.get("user_email") or context.user_id or "")
     is_guest = not email or email.startswith("guest") or "guest@" in email
+    role = "guest" if is_guest else ("manager" if "manager" in email else "customer")
 
+    name = state.get("user_name")
     if not name:
-        if "manager" in email:
-            name = "Alice (Manager)"
-        elif "customer" in email:
-            name = "John Smith"
+        name = next((n for key, n in DEFAULT_NAMES.items() if key in email), "Valued Customer")
+    first = str(name).split()[0]
 
-    if not is_guest:
-        if "manager" in email:
-            auth_context = f"""
-CURRENT AUTHENTICATED USER CONTEXT:
-- Authentication Status: LOGGED IN as STORE MANAGER via Keycloak OAuth 2.0.
-- Authenticated User Email: {email}
-- User Name: {name if name else 'Alice'}
-- Active Scopes: biscuit_coffee_customer, biscuit_coffee_manager
-- You have elevated Store Manager privileges. You can use mcp_proxy_listEmployees to list employees and view staff directories.
-"""
-        else:
-            auth_context = f"""
-CURRENT AUTHENTICATED USER CONTEXT:
-- Authentication Status: LOGGED IN as VALUED CUSTOMER via Keycloak OAuth 2.0.
-- Authenticated User Email: {email}
-- Customer Name: {name if name else 'Valued Customer'}
-- Active Scopes: biscuit_coffee_customer
-- MANDATORY INSTRUCTION FOR REWARDS & ORDERS: When the user asks to check their loyalty rewards points/balance (using mcp_proxy_getRewardBalance), or lookup orders, AUTOMATICALLY pass their authenticated email '{email}' as the email parameter. NEVER ask the user for their email address because they are already authenticated as '{email}'.
-- MANDATORY INSTRUCTION FOR EMPLOYEE & MANAGER REQUESTS: If this customer asks to list employees or view staff details, inform them: "I'm sorry, {name}, but viewing store employee information requires Store Manager permissions (biscuit_coffee_manager). Your current account is authenticated as a Customer ({email}). Please log out first using the 'Logout' button on the left panel, and then log in with Store Manager credentials (manager@biscuit-coffee.com)."
-"""
-    else:
-        auth_context = """
-CURRENT USER CONTEXT:
-- Authentication Status: Unauthenticated Guest visitor (Not Logged In).
-- Public Inquiries (Menu, Store Location, Hours):
-  You have direct access to mcp_proxy_getMenu, mcp_proxy_getStoreLocation, and mcp_proxy_getHoursOfOperation.
-  Answer any questions about the menu items, drink prices, sizes, store location, and opening hours directly using these tools WITHOUT asking the user to log in or provide an email.
-- Account & Order Actions:
-  If the user asks to place an order, lookup past orders, or check loyalty rewards points, politely inform them that placing orders and loyalty accounts require signing in. Invite them to click the 'Login' button.
-- Manager Actions:
-  If the user asks to list employees or view staff details, explain that employee records require Store Manager authorization (biscuit_coffee_manager scope). Invite them to log in with Keycloak using Store Manager credentials (manager@biscuit-coffee.com).
-"""
+    return BASE_INSTRUCTION + "\n" + USER_CONTEXT[role].format(name=name, first=first, email=email)
 
-    return BASE_INSTRUCTION + "\n" + auth_context
 
-# Define the Biscuit Coffee agent
+# ---------------------------------------------------------------------------
+# Gateway message relay (latency + exact wording)
+#
+# Apigee owns the customer-facing wording for its business rules. When a tool
+# result carries one of those sentences, end the turn with it directly:
+#   * skip_summarization=True -> ADK does NOT make a second model call
+#     (saves ~1-2.5 s) and the wording can never be paraphrased.
+#   * The original tool response is kept intact (the web UI classifies it to
+#     render the tool card); only a `relay_message` field is added, which the
+#     UI shows as the reply text.
+#
+# Relayed:  422 order_limit_exceeded, 404 order_not_found, 429 quota (arrives as
+#           "MCP tool execution failed: <sentence>"), successful order confirmation.
+# Not relayed: 403 insufficient scope - the model adds the manager-login guidance.
+# ---------------------------------------------------------------------------
+RELAY_CODES = {"order_limit_exceeded", "order_not_found"}
+_TRANSPORT_CRASH = re.compile(r"TaskGroup|connection lost|ConnectionError", re.I)
+_MCP_FAILED = "MCP tool execution failed:"
+
+
+def _content_json(tool_response: dict) -> Optional[dict]:
+    for part in tool_response.get("content") or []:
+        text = part.get("text") if isinstance(part, dict) else None
+        if not text:
+            continue
+        try:
+            body = json.loads(text)
+        except (TypeError, ValueError):
+            continue
+        if isinstance(body, dict):
+            return body
+    return None
+
+
+def gateway_message(tool_name: str, tool_response: Any) -> Optional[str]:
+    if not isinstance(tool_response, dict):
+        return None
+
+    # 429: McpError raised from the JSON-RPC error body (see tools.py transport shim).
+    err = tool_response.get("error")
+    if isinstance(err, str) and err.startswith(_MCP_FAILED) and not _TRANSPORT_CRASH.search(err):
+        msg = err[len(_MCP_FAILED):].strip()
+        return msg or None
+
+    body = _content_json(tool_response)
+    if not body or not isinstance(body.get("message"), str):
+        return None
+
+    # 422 / 404: {"error": "<code>", "message": "<sentence>"}
+    if body.get("error") in RELAY_CODES:
+        return body["message"]
+
+    # Successful order: {"order_id": "...", "message": "Your order is confirmed. ..."}
+    if tool_name == "placeOrder" and body.get("order_id") and not tool_response.get("isError"):
+        return body["message"]
+    return None
+
+
+def relay_gateway_message(
+    tool: BaseTool, args: dict, tool_context: ToolContext, tool_response: Any
+) -> Optional[dict]:
+    msg = gateway_message(tool.name, tool_response)
+    if not msg:
+        return None  # normal path: the model writes the reply
+    tool_context.actions.skip_summarization = True
+    return {**tool_response, "relay_message": msg}
+
+
 root_agent = Agent(
     name="biscuit_coffee_agent",
     model=MODEL_ID,
-    global_instruction="""You are a helpful virtual assistant for a coffee shop named Biscuit Coffee.
-        - Always respond politely.
-        - Do not inform the user when transferring to child agents.
-        - Use the customer's first name when conversing with them if you know it.""",
+    global_instruction="""You are a helpful, polite virtual assistant for the Biscuit Coffee shop.
+Use the customer's first name when you know it.""",
     instruction=get_instruction,
     description="An online agent for Biscuit Coffee.",
-    tools=[mcp_toolset, get_current_time]
+    tools=[mcp_toolset, get_current_time],
+    after_tool_callback=relay_gateway_message,
+    generate_content_config=GENERATE_CONTENT_CONFIG,
 )
 
 if __name__ == "__main__":

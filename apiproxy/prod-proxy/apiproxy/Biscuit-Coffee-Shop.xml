@@ -3,22 +3,41 @@
     <Description>API for Biscuit Coffee Shop providing tools for ordering, menu management, loyalty programs, and operational queries.</Description>
     <BasePaths>/biscuit-coffee</BasePaths>
     <Policies>
-        <Policy>AM-CancelOrder</Policy>
-        <Policy>AM-GetHoursOfOperation</Policy>
-        <Policy>AM-GetMenu</Policy>
-        <Policy>AM-GetOrder</Policy>
-        <Policy>AM-GetRewardBalance</Policy>
-        <Policy>AM-GetStoreLocation</Policy>
-        <Policy>AM-ListEmployees</Policy>
-        <Policy>AM-ListOrders</Policy>
-        <Policy>AM-PlaceOrder</Policy>
         <Policy>AM-SetBackendHeaders</Policy>
-        <Policy>AM-SignUpLoyalty</Policy>
         <Policy>EV-GetId</Policy>
         <Policy>JS-GetFilter</Policy>
         <Policy>JWT-VerifyToken</Policy>
         <Policy>RF-Invalid-Scope</Policy>
+        <!-- Maximum order value enforcement -->
+        <Policy>LC-MenuCache</Policy>
+        <Policy>SC-GetMenu</Policy>
+        <Policy>JS-CheckOrderValue</Policy>
+        <Policy>PC-MenuCache</Policy>
+        <Policy>RF-Order-Limit-Exceeded</Policy>
+        <!-- Order confirmation (price + order id) on the success path -->
+        <Policy>EV-OrderResult</Policy>
+        <Policy>JS-FormatOrderConfirmation</Policy>
+        <Policy>AM-OrderConfirmation</Policy>
+        <!-- Object-level authorisation (BOLA) on /orders and /orders/{id} -->
+        <Policy>JS-OwnershipFlags</Policy>
+        <Policy>SC-GetOrderOwner</Policy>
+        <Policy>JS-OwnershipLookup</Policy>
+        <Policy>JS-OwnershipResponse</Policy>
+        <Policy>AM-PinOrderFilter</Policy>
+        <Policy>RF-Order-Not-Found</Policy>
+        <!-- Consumer / end-user audit logging -->
+        <Policy>AM-AuditEndUser</Policy>
+        <Policy>AM-AuditRoleCustomer</Policy>
+        <Policy>AM-AuditRoleManager</Policy>
+        <Policy>AE-AuditApp</Policy>
+        <Policy>AE-AuditDeveloper</Policy>
+        <Policy>JS-AuditPrepare</Policy>
+        <Policy>AE-AuditProduct</Policy>
+        <Policy>JS-AuditAttributes</Policy>
+        <Policy>ML-AuditLargeOrder</Policy>
+        <Policy>ML-AuditJwtAccess</Policy>
     </Policies>
+
     <ProxyEndpoints>
         <ProxyEndpoint>default</ProxyEndpoint>
     </ProxyEndpoints>
@@ -27,6 +46,11 @@
     </TargetEndpoints>
     <Resources>
         <Resource>jsc://getFilter.js</Resource>
+        <Resource>jsc://checkOrderValue.js</Resource>
+        <Resource>jsc://checkOrderOwnership.js</Resource>
+
+        <Resource>jsc://formatOrderConfirmation.js</Resource>
+        <Resource>jsc://auditAttributes.js</Resource>
         <Resource>oas://openapi.yaml</Resource>
         <Resource>properties://idp-config.properties</Resource>
     </Resources>

@@ -1,6 +1,13 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <AssignMessage continueOnError="true" enabled="true" name="AM-SetBackendHeaders">
   <DisplayName>AM-SetBackendHeaders</DisplayName>
+  <!-- AUDIT: gateway-internal correlation/hint headers must not leak to the backend. -->
+  <Remove>
+    <Headers>
+      <Header name="X-Correlation-Id"/>
+      <Header name="X-Audit-Product"/>
+    </Headers>
+  </Remove>
   <Set>
     <Headers>
       <Header name="X-User-Email">{jwt.JWT-VerifyToken.claim.email}</Header>

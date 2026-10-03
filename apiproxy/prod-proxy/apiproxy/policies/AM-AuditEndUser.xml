@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!--
+  AUDIT LOGGING - captures the VERIFIED end-user identity from the Keycloak JWT
+  (JWT-VerifyToken) plus the API-consumer identity for audit records.
+
+  With the Option B design the Keycloak 'azp' (client id) IS the Apigee
+  consumer key, so the consumer is derived from the verified token - no
+  identity headers from upstream are trusted. The key is stored only as a
+  SHA-256 fingerprint.
+
+  Role defaults to "unknown"; AM-AuditRoleCustomer / AM-AuditRoleManager
+  refine it from the scope claim.
+-->
+<AssignMessage continueOnError="true" enabled="true" name="AM-AuditEndUser">
+  <DisplayName>AM-AuditEndUser</DisplayName>
+  <AssignVariable>
+    <Name>audit.user.sub</Name>
+    <Template>{jwt.JWT-VerifyToken.claim.subject}</Template>
+  </AssignVariable>
+  <AssignVariable>
+    <Name>audit.user.username</Name>
+    <Template>{jwt.JWT-VerifyToken.claim.preferred_username}</Template>
+  </AssignVariable>
+  <AssignVariable>
+    <Name>audit.user.email</Name>
+    <Template>{jwt.JWT-VerifyToken.claim.email}</Template>
+  </AssignVariable>
+  <AssignVariable>
+    <Name>audit.user.name</Name>
+    <Template>{jwt.JWT-VerifyToken.claim.name}</Template>
+  </AssignVariable>
+  <AssignVariable>
+    <Name>audit.user.scope</Name>
+    <Template>{jwt.JWT-VerifyToken.claim.scope}</Template>
+  </AssignVariable>
+  <AssignVariable>
+    <Name>audit.user.jti</Name>
+    <Template>{jsonPath($.jti,jwt.JWT-VerifyToken.payload-json)}</Template>
+  </AssignVariable>
+  <AssignVariable>
+    <Name>audit.user.role</Name>
+    <Value>unknown</Value>
+  </AssignVariable>
+  <AssignVariable>
+    <Name>audit.client_id</Name>
+    <Template>{jwt.JWT-VerifyToken.claim.azp}</Template>
+  </AssignVariable>
+  <AssignVariable>
+    <Name>audit.key_fp</Name>
+    <Template>sha256:{sha256Hex(audit.client_id)}</Template>
+  </AssignVariable>
+  <AssignVariable>
+    <Name>audit.correlation_id</Name>
+    <Template>{firstnonnull(request.header.X-Correlation-Id,messageid)}</Template>
+  </AssignVariable>
+  <AssignVariable>
+    <Name>audit.attributes_json</Name>
+    <Value>{}</Value>
+  </AssignVariable>
+  <IgnoreUnresolvedVariables>true</IgnoreUnresolvedVariables>
+  <AssignTo createNew="false" transport="http" type="request"/>
+</AssignMessage>

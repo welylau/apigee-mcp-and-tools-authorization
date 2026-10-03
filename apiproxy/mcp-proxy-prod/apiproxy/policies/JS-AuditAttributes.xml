@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!--
+  AUDIT LOGGING - flattens the AccessEntity app/product results into
+  audit.attributes_json (generic custom-attribute enumeration).
+  Rejection path only (quota-exceeded FaultRule). continueOnError=true.
+-->
+<Javascript continueOnError="true" enabled="true" timeLimit="200" name="JS-AuditAttributes">
+  <DisplayName>JS-AuditAttributes</DisplayName>
+  <Properties>
+    <Property name="stage">final</Property>
+    <Property name="appVar">AccessEntity.AE-AuditApp</Property>
+    <Property name="productVar">AccessEntity.AE-AuditProduct</Property>
+  </Properties>
+  <ResourceURL>jsc://auditAttributes.js</ResourceURL>
+</Javascript>

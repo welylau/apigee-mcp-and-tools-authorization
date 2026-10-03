@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!--
+  AUDIT LOGGING - loads the developer who owns the caller's consumer key, so the
+  audit record carries the developer email. Large-order rejection path only.
+-->
+<AccessEntity continueOnError="true" enabled="true" name="AE-AuditDeveloper">
+  <DisplayName>AE-AuditDeveloper</DisplayName>
+  <EntityType value="developer"/>
+  <EntityIdentifier ref="audit.client_id" type="consumerkey"/>
+  <OutputFormat>JSON</OutputFormat>
+</AccessEntity>

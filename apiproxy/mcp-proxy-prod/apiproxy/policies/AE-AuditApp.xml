@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!--
+  AUDIT LOGGING - loads the full developer-app entity so that ALL of its custom
+  attributes can be logged without hard-coding attribute names.
+  Runs only on the rejection path (quota-exceeded FaultRule), so allowed calls
+  pay no lookup cost. continueOnError=true: never alters the client response.
+-->
+<AccessEntity continueOnError="true" enabled="true" name="AE-AuditApp">
+  <DisplayName>AE-AuditApp</DisplayName>
+  <EntityType value="app"/>
+  <EntityIdentifier ref="audit.client_id" type="consumerkey"/>
+  <OutputFormat>JSON</OutputFormat>
+</AccessEntity>

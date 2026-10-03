@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!--
+  AUDIT LOGGING - captures the JSON-RPC method and MCP tool name so audit
+  records can say which tool was being called (e.g. tools/call + placeOrder).
+
+  continueOnError=true: a non-JSON body must never break the main flow.
+-->
+<ExtractVariables continueOnError="true" enabled="true" name="EV-McpToolCall">
+  <DisplayName>EV-McpToolCall</DisplayName>
+  <Source clearPayload="false">request</Source>
+  <JSONPayload>
+    <Variable name="method" type="string">
+      <JSONPath>$.method</JSONPath>
+    </Variable>
+    <Variable name="tool" type="string">
+      <JSONPath>$.params.name</JSONPath>
+    </Variable>
+  </JSONPayload>
+  <VariablePrefix>mcpaudit</VariablePrefix>
+  <IgnoreUnresolvedVariables>true</IgnoreUnresolvedVariables>
+</ExtractVariables>

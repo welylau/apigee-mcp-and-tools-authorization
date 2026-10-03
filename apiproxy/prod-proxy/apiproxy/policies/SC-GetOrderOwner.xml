@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!--
+  Pre-flight ownership lookup for DELETE /orders/{id}.
+
+  Same GoogleIDToken pattern as SC-GetMenu and targets/default.xml, because the
+  backend is a private Cloud Run service.
+
+  TWO DELIBERATE DIFFERENCES FROM SC-GetMenu - do not copy that file verbatim:
+
+  1. continueOnError is FALSE. SC-GetMenu fails open on purpose, so that an
+     unavailable menu never blocks a legitimate order. Here the opposite is
+     required: if we cannot establish who owns the order, the delete must not
+     proceed. A transport failure therefore aborts the flow and the target is
+     never called.
+
+  2. success.codes accepts every HTTP status. Without this, a 4xx/5xx from the
+     backend counts as a callout failure and surfaces as a generic 500 - which
+     would make "order does not exist" visibly different from "order is not
+     yours", reintroducing the enumeration oracle the 404 is meant to close.
+     Letting every status through hands the decision to JS-OwnershipLookup,
+     which denies on anything that is not a 200.
+
+  The path uses order.id, which JS-OwnershipFlags derives from
+  proxy.pathsuffix and validates against ^[A-Za-z0-9_-]{1,64}$ before this
+  policy runs, so the callout URL cannot be steered by a crafted path.
+-->
+<ServiceCallout continueOnError="false" enabled="true" name="SC-GetOrderOwner">
+  <DisplayName>SC-GetOrderOwner</DisplayName>
+  <Request clearPayload="true" variable="ownerRequest">
+    <Set>
+      <Verb>GET</Verb>
+      <Path>/orders/{order.id}</Path>
+    </Set>
+    <IgnoreUnresolvedVariables>true</IgnoreUnresolvedVariables>
+  </Request>
+  <Response>ownerResponse</Response>
+  <Timeout>5000</Timeout>
+  <HTTPTargetConnection>
+    <Properties>
+      <Property name="success.codes">1xx,2xx,3xx,4xx,5xx</Property>
+    </Properties>
+    <Authentication>
+      <GoogleIDToken>
+        <Audience>https://biscuit-coffee-backend-YOUR_GCP_PROJECT_NUMBER.asia-southeast1.run.app</Audience>
+      </GoogleIDToken>
+    </Authentication>
+    <URL>https://biscuit-coffee-backend-YOUR_GCP_PROJECT_NUMBER.asia-southeast1.run.app</URL>
+  </HTTPTargetConnection>
+</ServiceCallout>

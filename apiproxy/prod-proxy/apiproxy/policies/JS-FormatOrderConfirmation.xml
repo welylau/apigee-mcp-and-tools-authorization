@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!--
+  Runs formatOrderConfirmation.js to turn the backend's raw order_id and
+  total_amount into the sentence the customer actually reads.
+
+  Kept as a separate step from AM-OrderConfirmation so the formatting logic is
+  testable in isolation and the AssignMessage stays a simple substitution.
+-->
+<Javascript continueOnError="false" enabled="true" timeLimit="200" name="JS-FormatOrderConfirmation">
+  <DisplayName>JS-FormatOrderConfirmation</DisplayName>
+  <ResourceURL>jsc://formatOrderConfirmation.js</ResourceURL>
+</Javascript>

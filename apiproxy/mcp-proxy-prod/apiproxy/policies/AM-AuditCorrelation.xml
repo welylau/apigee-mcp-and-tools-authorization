@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!--
+  AUDIT LOGGING - forwards this gateway's message id to the backing REST proxy
+  (Biscuit-Coffee-Shop) so audit records from both proxies can be joined.
+  This is a correlation label only; no identity is derived from it downstream.
+
+  X-Audit-Product is a HINT naming the product VerifyAPIKey matched. The
+  downstream proxy accepts it only if it is one of the products bound to the
+  caller's key (looked up from the verified JWT azp), so a forged value cannot
+  misattribute a call.
+-->
+<AssignMessage continueOnError="true" enabled="true" name="AM-AuditCorrelation">
+  <DisplayName>AM-AuditCorrelation</DisplayName>
+  <Set>
+    <Headers>
+      <Header name="X-Correlation-Id">{messageid}</Header>
+      <Header name="X-Audit-Product">{audit.product}</Header>
+    </Headers>
+  </Set>
+  <IgnoreUnresolvedVariables>true</IgnoreUnresolvedVariables>
+  <AssignTo createNew="false" transport="http" type="request"/>
+</AssignMessage>

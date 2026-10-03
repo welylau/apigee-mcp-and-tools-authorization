@@ -16,7 +16,26 @@
   </PostFlow>
   <Flows/>
   <HTTPTargetConnection>
+    <!-- Treat 4xx as a normal response rather than a target failure.
+         By default Apigee classifies a 4xx from the target as an error and
+         SKIPS the ProxyEndpoint response flow. That silently defeated the
+         ownership check on GET /orders/{id}: a nonexistent order returned the
+         backend's own {"detail": ...} 404 while an order that merely was not
+         yours returned the gateway's {"error": "order_not_found"} 404. The two
+         were distinguishable, which is precisely the enumeration oracle the
+         shared 404 exists to close.
+
+         5xx is deliberately NOT included - a genuine backend failure should
+         still be handled as a fault, not massaged into a response.
+
+         Response-flow policies that must not run on errors are already gated
+         on `response.status.code = 200` (see the placeOrder flow), so this
+         does not change the success path. -->
+    <Properties>
+      <Property name="success.codes">1xx,2xx,3xx,4xx</Property>
+    </Properties>
     <Authentication>
+
       <GoogleIDToken>
         <Audience>https://biscuit-coffee-backend-YOUR_GCP_PROJECT_NUMBER.asia-southeast1.run.app</Audience>
       </GoogleIDToken>

@@ -8,12 +8,25 @@
       <Step>
         <Name>CORS-Allow</Name>
       </Step>
+      <!-- Capture the JSON-RPC id up front so any fault response can echo it.
+           Must run before the Quota steps, since FaultRules can only read
+           variables that were already set when the fault fired. -->
+      <Step>
+        <Name>EV-JsonRpcId</Name>
+      </Step>
+      <Step>
+        <Name>AM-JsonRpcIdDefault</Name>
+      </Step>
       <Step>
         <Name>JWT-Decode</Name>
         <Condition>request.header.Authorization != null</Condition>
       </Step>
       <Step>
         <Name>PP-ParseMCPTools</Name>
+      </Step>
+      <!-- AUDIT: capture JSON-RPC method + MCP tool name for audit records. -->
+      <Step>
+        <Name>EV-McpToolCall</Name>
       </Step>
       <Step>
         <Name>VA-VerifyKey</Name>
@@ -23,9 +36,72 @@
         <Name>VA-VerifyKey-Header</Name>
         <Condition>request.header.Authorization == null</Condition>
       </Step>
+      <!-- AUDIT: build the API-consumer context (client id, app, developer,
+           product, SHA-256 key fingerprint). Must run AFTER VerifyAPIKey and
+           BEFORE the Quota steps, because a QuotaViolation stops this flow. -->
+      <Step>
+        <Name>AM-AuditConsumerContext</Name>
+      </Step>
+      <!-- Enforce the per-MCP-tool quota declared on the API Product.
+           Must run AFTER VerifyAPIKey so the product/operation is resolved. -->
+      <Step>
+        <Name>QU-ProductQuota</Name>
+        <Condition>request.header.Authorization != null</Condition>
+      </Step>
+      <Step>
+        <Name>QU-ProductQuota-Header</Name>
+        <Condition>request.header.Authorization == null</Condition>
+      </Step>
+      <!-- Forward the API Product's per-operation maxOrderAmount attribute to
+           the backing API proxy. Must run AFTER VerifyAPIKey, which is what
+           resolves the product operation and its attributes. -->
+      <Step>
+        <Name>AM-MaxOrderAmount</Name>
+      </Step>
+      <!-- Forward the product-level enforceOrderOwnership toggle the same way.
+           Product level rather than per-operation because it governs three
+           operations at once (getOrder, cancelOrder, listOrders). -->
+      <Step>
+        <Name>AM-OwnershipFlag</Name>
+      </Step>
+      <!-- AUDIT: correlation id (+ product hint) for joining with the
+           Biscuit-Coffee-Shop audit records. -->
+      <Step>
+        <Name>AM-AuditCorrelation</Name>
+      </Step>
     </Request>
     <Response/>
   </PreFlow>
+  <!-- AUDIT: runs after the response is sent (no added latency), including on
+       fault paths. Writes to Cloud Logging log 'apigee-consumer-audit'. -->
+  <PostClientFlow name="PostClientFlow">
+    <Response>
+      <Step>
+        <Name>ML-AuditQuotaViolation</Name>
+        <Condition>(ratelimit.QU-ProductQuota.failed = true) or (ratelimit.QU-ProductQuota-Header.failed = true)</Condition>
+      </Step>
+    </Response>
+  </PostClientFlow>
+  <FaultRules>
+    <!-- Convert raw Apigee QuotaViolation faults into a JSON-RPC 2.0 error -->
+    <FaultRule name="quota-exceeded">
+      <!-- AUDIT: generic custom-attribute enumeration, only on this rejection
+           path. All three are continueOnError, so the 429 is unaffected. -->
+      <Step>
+        <Name>AE-AuditApp</Name>
+      </Step>
+      <Step>
+        <Name>AE-AuditProduct</Name>
+      </Step>
+      <Step>
+        <Name>JS-AuditAttributes</Name>
+      </Step>
+      <Step>
+        <Name>RF-Quota-Exceeded</Name>
+      </Step>
+      <Condition>(fault.name = "QuotaViolation") or (ratelimit.QU-ProductQuota.failed = true) or (ratelimit.QU-ProductQuota-Header.failed = true)</Condition>
+    </FaultRule>
+  </FaultRules>
   <RouteRule name="default">
     <TargetEndpoint>default</TargetEndpoint>
   </RouteRule>

@@ -1,9 +1,0 @@
-<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<AssignMessage name="AM-GetHoursOfOperation">
-  <Set>
-    <Payload contentType="application/json">[{"day": "Monday", "open": "07:00", "close": "19:00"}, {"day": "Tuesday", "open": "07:00", "close": "19:00"}, {"day": "Wednesday", "open": "07:00", "close": "19:00"}, {"day": "Thursday", "open": "07:00", "close": "19:00"}, {"day": "Friday", "open": "07:00", "close": "21:00"}, {"day": "Saturday", "open": "08:00", "close": "21:00"}, {"day": "Sunday", "open": "08:00", "close": "18:00"}]</Payload>
-    <StatusCode>200</StatusCode>
-  </Set>
-  <IgnoreUnresolvedVariables>true</IgnoreUnresolvedVariables>
-  <AssignTo createNew="false" transport="http" type="response"/>
-</AssignMessage>

@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Query, Header
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from google.cloud import firestore
 
 logging.basicConfig(level=logging.INFO)
@@ -353,7 +353,14 @@ def place_order(
 
     client.collection(ORDERS_COLLECTION).document(order_id).set(order_data)
     logger.info(f"Order placed: {order_id}")
-    return {"order_id": order_id, "message": "Order successfully placed"}
+    # total_amount is returned so the API gateway can quote the price back to the
+    # customer. It is the same figure written to Firestore above, which keeps the
+    # confirmation the customer sees in step with the order actually recorded.
+    return {
+        "order_id": order_id,
+        "message": "Order successfully placed",
+        "total_amount": total_amount,
+    }
 
 @app.get("/orders/{order_id}")
 def get_order(order_id: str):

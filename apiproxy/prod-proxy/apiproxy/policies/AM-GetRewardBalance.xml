@@ -1,9 +1,0 @@
-<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<AssignMessage name="AM-GetRewardBalance">
-  <Set>
-    <Payload contentType="application/json">{"points": {xeger( '[1-9]{3}' )}}</Payload>
-    <StatusCode>200</StatusCode>
-  </Set>
-  <IgnoreUnresolvedVariables>true</IgnoreUnresolvedVariables>
-  <AssignTo createNew="false" transport="http" type="response"/>
-</AssignMessage>
