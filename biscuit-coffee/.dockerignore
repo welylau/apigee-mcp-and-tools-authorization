@@ -1,0 +1,8 @@
+# Only python/agents is copied into the image (see Dockerfile). Keep local
+# secrets and caches out of it: ADK commonly reads a .env next to the agent.
+.env
+.env.*
+**/__pycache__
+**/*.pyc
+.venv
+.DS_Store

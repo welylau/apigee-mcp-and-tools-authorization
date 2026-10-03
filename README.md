@@ -435,6 +435,7 @@ bash ./keycloak-config/setup_apigee_realm.sh
 > 3. OAuth 2.0 Client: `biscuit-coffee-agent`
 > 4. Customer User: `customer@biscuit-coffee.com` (password: `ilovecoffee`) with customer scope.
 > 5. Store Manager User: `manager@biscuit-coffee.com` (password: `ilovecoffee`) with customer + manager scopes.
+> 6. Extra Customer Users: `customer2@biscuit-coffee.com` (Michael, used by the tour's order-ownership mission) and `customer3@biscuit-coffee.com` (password: `ilovecoffee`) with customer scope.
 
 ---
 

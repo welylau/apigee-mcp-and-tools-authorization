@@ -131,25 +131,27 @@ if ! sudo docker exec "$KEYCLOAK_CONTAINER" /opt/keycloak/bin/kcadm.sh get users
 else
   echo "User '$MANAGER_USER' already exists."
 fi
-# 9c. Wely Lau customer user
-WELY_USER="welylau@google.com"
-WELY_PASS="ilovecoffee"
-if ! sudo docker exec "$KEYCLOAK_CONTAINER" /opt/keycloak/bin/kcadm.sh get users -r "$REALM_NAME" -q username="$WELY_USER" | grep -q "\"username\" : \"$WELY_USER\""; then
+sudo docker exec "$KEYCLOAK_CONTAINER" /opt/keycloak/bin/kcadm.sh add-roles -r "$REALM_NAME" --uusername "$MANAGER_USER" --rolename manager --rolename customer 2>/dev/null || true
+
+# 9c. Additional customer user
+CUSTOMER3_USER="customer3@biscuit-coffee.com"
+CUSTOMER3_PASS="ilovecoffee"
+if ! sudo docker exec "$KEYCLOAK_CONTAINER" /opt/keycloak/bin/kcadm.sh get users -r "$REALM_NAME" -q username="$CUSTOMER3_USER" | grep -q "\"username\" : \"$CUSTOMER3_USER\""; then
   sudo docker exec "$KEYCLOAK_CONTAINER" /opt/keycloak/bin/kcadm.sh create users -r "$REALM_NAME" \
-    -s username="$WELY_USER" \
-    -s email="$WELY_USER" \
-    -s firstName="Wely" \
-    -s lastName="Lau" \
+    -s username="$CUSTOMER3_USER" \
+    -s email="$CUSTOMER3_USER" \
+    -s firstName="Customer" \
+    -s lastName="Three" \
     -s enabled=true \
     -s emailVerified=true
 
   sudo docker exec "$KEYCLOAK_CONTAINER" /opt/keycloak/bin/kcadm.sh set-password -r "$REALM_NAME" \
-    --username "$WELY_USER" \
-    --new-password "$WELY_PASS"
+    --username "$CUSTOMER3_USER" \
+    --new-password "$CUSTOMER3_PASS"
 else
-  echo "User '$WELY_USER' already exists."
+  echo "User '$CUSTOMER3_USER' already exists."
 fi
-sudo docker exec "$KEYCLOAK_CONTAINER" /opt/keycloak/bin/kcadm.sh add-roles -r "$REALM_NAME" --uusername "$WELY_USER" --rolename customer 2>/dev/null || true
+sudo docker exec "$KEYCLOAK_CONTAINER" /opt/keycloak/bin/kcadm.sh add-roles -r "$REALM_NAME" --uusername "$CUSTOMER3_USER" --rolename customer 2>/dev/null || true
 
 # 9d. Michael Bosh customer user
 CUSTOMER2_USER="customer2@biscuit-coffee.com"
