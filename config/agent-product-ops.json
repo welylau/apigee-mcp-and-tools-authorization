@@ -73,6 +73,10 @@
                     {
                         "name": "maxOrderAmount",
                         "value": "100"
+                    },
+                    {
+                        "name": "approvalThreshold",
+                        "value": "50"
                     }
                 ]
             },
@@ -135,15 +139,6 @@
                 "operations": [
                     {
                         "operation": "tools/call/getRewardBalance"
-                    }
-                ],
-                "quota": {}
-            },
-            {
-                "apiSource": "mcp-proxy-prod",
-                "operations": [
-                    {
-                        "operation": "tools/call/listEmployees"
                     }
                 ],
                 "quota": {}

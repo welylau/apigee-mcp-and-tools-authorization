@@ -31,8 +31,11 @@
  *   order.total_display  - same, formatted for the customer message
  *   order.max_display    - the effective cap, formatted
  *   order.item_count     - total number of drinks
- *   order.exceeds_limit  - "true" / "false" (string, for the flow condition)
+ *   order.exceeds_limit  - "true" when total >= cap (string, for the flow condition)
+ *   order.requires_approval - "true" when approvalThreshold <= total < cap
+ *   order.approval_threshold_display - the effective threshold, formatted
  *   order.limit_source   - product-attribute | proxy-default (for debugging)
+ *   order.threshold_source - product-attribute | proxy-default (for debugging)
  *   order.pricing_source - cache | callout | fallback (for debugging)
  */
 
@@ -81,6 +84,7 @@ if (!menuJson) {
 }
 
 var prices = {};
+var names = {};
 if (menuJson) {
     try {
         var menu = JSON.parse(menuJson);
@@ -88,6 +92,8 @@ if (menuJson) {
             for (var i = 0; i < menu.length; i++) {
                 if (menu[i] && menu[i].id !== undefined) {
                     prices[menu[i].id] = parseFloat(menu[i].price);
+                    names[menu[i].id] = String(menu[i].name || menu[i].id) +
+                        (menu[i].size ? ' (' + menu[i].size + ')' : '');
                 }
             }
         }
@@ -115,6 +121,7 @@ try {
 // ---------------------------------------------------------------- total
 var total = 0;
 var count = 0;
+var summary = [];
 
 for (var j = 0; j < items.length; j++) {
     var item = items[j] || {};
@@ -128,15 +135,41 @@ for (var j = 0; j < items.length; j++) {
     }
     total += price * qty;
     count += qty;
+    if (qty > 0) {
+        // Only menu names (or a fixed label for unknown ids) go into the
+        // summary, so customer-supplied text cannot shape the approval email.
+        summary.push(qty + ' x ' + (names[item.item_id] || 'unlisted item'));
+    }
 }
 
 total = Math.round(total * 100) / 100;
 
 // Render a whole-dollar cap as "100" rather than "100.00" so the customer
 // message reads naturally, while still supporting values like 99.50.
-var maxDisplay = (maxAmount % 1 === 0)
-    ? maxAmount.toFixed(0)
-    : maxAmount.toFixed(2);
+function money(v) {
+    return (v % 1 === 0) ? v.toFixed(0) : v.toFixed(2);
+}
+var maxDisplay = money(maxAmount);
+
+// ------------------------------------------------------- approval threshold
+// Orders from approvalThreshold up to (not including) the cap need a person
+// to approve them (human in the loop). Same trust rule as the cap: the header only counts when
+// mcp-proxy-prod signed the request. An unsigned header falls back to
+// defaultApprovalThreshold, so a caller cannot raise the threshold to skip
+// approval. A threshold of 0 or less, or one above the cap, turns approval off.
+var approvalThreshold = trusted
+    ? parseFloat(context.getVariable('request.header.X-Approval-Threshold'))
+    : NaN;
+var thresholdSource = 'product-attribute';
+if (isNaN(approvalThreshold)) {
+    approvalThreshold = parseFloat(properties.defaultApprovalThreshold || '50');
+    thresholdSource = 'proxy-default';
+}
+// The cap is exclusive: online orders must total LESS than maxOrderAmount, so
+// a total of exactly the cap (e.g. $100.00) is rejected with 422. Orders from
+// approvalThreshold up to (not including) the cap become PENDING_APPROVAL.
+var exceeds = total >= maxAmount;
+var requiresApproval = !exceeds && approvalThreshold > 0 && total >= approvalThreshold;
 
 context.setVariable('order.total', total);
 context.setVariable('order.total_display', total.toFixed(2));
@@ -144,4 +177,9 @@ context.setVariable('order.max_display', maxDisplay);
 context.setVariable('order.item_count', count);
 context.setVariable('order.pricing_source', source);
 context.setVariable('order.limit_source', limitSource);
-context.setVariable('order.exceeds_limit', total > maxAmount ? 'true' : 'false');
+context.setVariable('order.exceeds_limit', exceeds ? 'true' : 'false');
+context.setVariable('order.requires_approval', requiresApproval ? 'true' : 'false');
+context.setVariable('order.approval_threshold_display',
+    isNaN(approvalThreshold) ? '' : money(approvalThreshold));
+context.setVariable('order.threshold_source', thresholdSource);
+context.setVariable('order.items_summary', summary.join(', '));

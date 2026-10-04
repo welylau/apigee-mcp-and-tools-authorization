@@ -26,9 +26,17 @@
     <Name>maxorder.amount</Name>
     <Template>{verifyapikey.VA-VerifyKey.apiproduct.operation.payload.attributes.maxOrderAmount}{verifyapikey.VA-VerifyKey-Header.apiproduct.operation.payload.attributes.maxOrderAmount}</Template>
   </AssignVariable>
+  <!-- Human-in-the-loop: orders at or above this total need approval. Same
+       two-variable trick as above; empty when the attribute is not set, in which
+       case Biscuit-Coffee-Shop uses its own defaultApprovalThreshold. -->
+  <AssignVariable>
+    <Name>maxorder.approval_threshold</Name>
+    <Template>{verifyapikey.VA-VerifyKey.apiproduct.operation.payload.attributes.approvalThreshold}{verifyapikey.VA-VerifyKey-Header.apiproduct.operation.payload.attributes.approvalThreshold}</Template>
+  </AssignVariable>
   <Set>
     <Headers>
       <Header name="X-Max-Order-Amount">{maxorder.amount}</Header>
+      <Header name="X-Approval-Threshold">{maxorder.approval_threshold}</Header>
     </Headers>
   </Set>
   <AssignTo createNew="false" transport="http" type="request"/>

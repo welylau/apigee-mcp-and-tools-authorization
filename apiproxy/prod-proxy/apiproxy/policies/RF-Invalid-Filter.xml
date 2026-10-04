@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!-- Rejects ?filter= values that JS-GetFilter did not accept (unknown key,
+     malformed, empty, or repeated). Fixed message; never echoes input. -->
+<RaiseFault continueOnError="false" enabled="true" name="RF-Invalid-Filter">
+  <FaultResponse>
+    <Set>
+      <Headers>
+        <Header name="Content-Type">application/json</Header>
+      </Headers>
+      <Payload contentType="application/json">{
+  "error": "invalid_filter",
+  "message": "{orderfilter.error}"
+}</Payload>
+      <StatusCode>400</StatusCode>
+      <ReasonPhrase>Bad Request</ReasonPhrase>
+    </Set>
+  </FaultResponse>
+  <IgnoreUnresolvedVariables>true</IgnoreUnresolvedVariables>
+</RaiseFault>

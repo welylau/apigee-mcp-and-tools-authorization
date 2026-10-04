@@ -7,6 +7,13 @@
       <Step>
         <Name>AM-SetBackendHeaders</Name>
       </Step>
+      <!-- Human-in-the-loop: tell the backend to save this order as
+           PENDING_APPROVAL. order.requires_approval is only set by
+           JS-CheckOrderValue in the placeOrder flow. -->
+      <Step>
+        <Name>AM-OrderPendingApproval</Name>
+        <Condition>(order.requires_approval = "true") and (request.verb = "POST")</Condition>
+      </Step>
     </Request>
     <Response/>
   </PreFlow>

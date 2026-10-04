@@ -19,6 +19,10 @@
   <DisplayName>JS-CheckOrderValue</DisplayName>
   <Properties>
     <Property name="defaultMaxOrderAmount">100</Property>
+    <!-- Orders at or above this total (and below the cap) need staff approval.
+         Like defaultMaxOrderAmount, only used when mcp-proxy-prod did not send the
+         signed X-Approval-Threshold header taken from the product attribute. -->
+    <Property name="defaultApprovalThreshold">50</Property>
     <Property name="defaultItemPrice">3.50</Property>
   </Properties>
   <ResourceURL>jsc://checkOrderValue.js</ResourceURL>

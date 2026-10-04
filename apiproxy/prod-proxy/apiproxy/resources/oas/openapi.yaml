@@ -126,7 +126,7 @@ paths:
           schema:
             type: string
             example: "email:customer@example.com"
-          description: "Filter orders by criteria using the format 'key:value'. Supported keys: email, name, loyalty_id."
+          description: "Filter orders by criteria using the format 'key:value'. Supported keys: email, name, loyalty_id, status. Any other key is rejected."
       responses:
         '200':
           description: A list of all placed orders
@@ -218,6 +218,300 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/OrderDetails'
+  # --- staff operations (generated from mcp-proxy-prod spec) ---
+  /staff/orders:
+    get:
+      description: 'STAFF ONLY (store staff or store manager). List orders from ALL customers, newest first. Use this to see the order board, e.g. which orders are waiting for approval (status=PENDING_APPROVAL), being prepared (IN_PROGRESS) or ready for pickup (READY). Optionally filter by status and/or customer. Not for customers: customers use listOrders to see their own orders.'
+      operationId: listAllOrders
+      parameters:
+      - description: Only return orders with this status. One of PENDING_APPROVAL, IN_PROGRESS, READY, COMPLETED, CANCELLED, REJECTED.
+        in: query
+        name: status
+        required: false
+        schema:
+          type: string
+      - description: Only return orders for this customer. Matches the exact customer email, or any part of the customer name.
+        in: query
+        name: customer
+        required: false
+        schema:
+          type: string
+      - description: Maximum number of orders to return (default 50, max 200).
+        in: query
+        name: limit
+        required: false
+        schema:
+          type: integer
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderListResponse'
+          description: Orders from all customers, newest first
+      security:
+      - OpenIDConnect:
+        - biscuit_coffee_staff
+        - biscuit_coffee_manager
+      summary: 'Staff: list all customers'' orders'
+  /staff/orders/{order_id}:
+    get:
+      description: STAFF ONLY (store staff or store manager). Get the full details of ANY customer's order by its order ID, including status, items, total, approval decision and status history.
+      operationId: getAnyOrder
+      parameters:
+      - description: The order ID, e.g. 49820.
+        in: path
+        name: order_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderDetails'
+          description: The complete details of the order
+      security:
+      - OpenIDConnect:
+        - biscuit_coffee_staff
+        - biscuit_coffee_manager
+      summary: 'Staff: view any order'
+  /staff/orders/{order_id}/status:
+    post:
+      description: 'STAFF ONLY (store staff or store manager). Move an order through preparation: IN_PROGRESS (being made), READY (ready for pickup), COMPLETED (picked up) or CANCELLED. Records who changed it and when. Orders waiting for approval (PENDING_APPROVAL) or REJECTED cannot be changed here: use decideOrder to approve or reject them.'
+      operationId: updateOrderStatus
+      parameters:
+      - description: The order ID, e.g. 49820.
+        in: path
+        name: order_id
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              properties:
+                status:
+                  description: The new status.
+                  enum:
+                  - IN_PROGRESS
+                  - READY
+                  - COMPLETED
+                  - CANCELLED
+                  type: string
+              required:
+              - status
+              type: object
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                properties:
+                  order_id:
+                    type: string
+                  previous_status:
+                    type: string
+                  status:
+                    type: string
+                  updated_by:
+                    type: string
+                type: object
+          description: The order's new status
+      security:
+      - OpenIDConnect:
+        - biscuit_coffee_staff
+        - biscuit_coffee_manager
+      summary: 'Staff: update order progress'
+  /staff/orders/{order_id}/decision:
+    post:
+      description: STAFF ONLY (store staff or store manager). Approve or reject a large order that is waiting for approval (status PENDING_APPROVAL). APPROVE starts preparing the order (IN_PROGRESS); REJECT cancels it (REJECTED). The decision takes effect immediately and records you as the decider; a second decision on the same order is refused. Only call this when the staff member has clearly said to approve or reject a specific order.
+      operationId: decideOrder
+      parameters:
+      - description: The order ID, e.g. 49820.
+        in: path
+        name: order_id
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              properties:
+                decision:
+                  description: APPROVE or REJECT.
+                  enum:
+                  - APPROVE
+                  - REJECT
+                  type: string
+                reason:
+                  description: Optional short reason, e.g. why the order was rejected.
+                  type: string
+              required:
+              - decision
+              type: object
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                properties:
+                  decided_by:
+                    type: string
+                  decision:
+                    type: string
+                  message:
+                    type: string
+                  order_id:
+                    type: string
+                  resolved_via:
+                    type: string
+                  status:
+                    type: string
+                type: object
+          description: The decision and the order's new status
+      security:
+      - OpenIDConnect:
+        - biscuit_coffee_staff
+        - biscuit_coffee_manager
+      summary: 'Staff: approve or reject an order'
+  /staff/employees/{employee_id}:
+    get:
+      description: STORE MANAGER ONLY. Get one employee's contact details (name, phone, email) by employee ID, e.g. emp-101. Use listEmployees to find IDs.
+      operationId: getEmployee
+      parameters:
+      - description: The employee ID, e.g. emp-101.
+        in: path
+        name: employee_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EmployeeDetails'
+          description: The employee's details
+      security:
+      - OpenIDConnect:
+        - biscuit_coffee_manager
+      summary: 'Manager: employee details'
+  /staff/store/hours:
+    put:
+      description: STORE MANAGER ONLY. Change the opening hours for one day of the week. Send open and close as 24-hour HH:MM (e.g. open 07:00, close 18:00), or closed=true to close the store that day. Only call this when the manager has clearly asked to change the hours.
+      operationId: updateStoreHours
+      requestBody:
+        content:
+          application/json:
+            schema:
+              properties:
+                close:
+                  description: Closing time, 24-hour HH:MM, e.g. 18:00. Must be later than open.
+                  type: string
+                closed:
+                  description: Set to true to close the store all day (omit open/close).
+                  type: boolean
+                day:
+                  description: Day of the week, e.g. Monday.
+                  enum:
+                  - Monday
+                  - Tuesday
+                  - Wednesday
+                  - Thursday
+                  - Friday
+                  - Saturday
+                  - Sunday
+                  type: string
+                open:
+                  description: Opening time, 24-hour HH:MM, e.g. 07:00.
+                  type: string
+              required:
+              - day
+              type: object
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                properties:
+                  days:
+                    $ref: '#/components/schemas/HoursResponse'
+                  updated:
+                    $ref: '#/components/schemas/HoursDayEntry'
+                type: object
+          description: The updated day and the full week
+      security:
+      - OpenIDConnect:
+        - biscuit_coffee_manager
+      summary: 'Manager: change opening hours'
+  /staff/menu/{item_id}:
+    patch:
+      description: 'STORE MANAGER ONLY. Change a menu item: its price, its name, or mark it sold out (available=false) / back in stock (available=true). Customers cannot order sold-out items. Send only the fields to change. Use getMenu to find item IDs (e.g. item-1-m). Only call this when the manager has clearly asked for the change.'
+      operationId: updateMenuItem
+      parameters:
+      - description: The menu item ID, e.g. item-1-m.
+        in: path
+        name: item_id
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              properties:
+                available:
+                  description: false = sold out, true = available again.
+                  type: boolean
+                name:
+                  description: New display name.
+                  type: string
+                price:
+                  description: New price in dollars, e.g. 4.5.
+                  type: number
+              type: object
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MenuItem'
+          description: The updated menu item
+      security:
+      - OpenIDConnect:
+        - biscuit_coffee_manager
+      summary: 'Manager: update a menu item'
+  /staff/stats:
+    get:
+      description: 'STORE MANAGER ONLY. Sales statistics for the last N days: number of orders, revenue, average order value, orders by status, top 5 items and how many orders are waiting for approval right now.'
+      operationId: getSalesStats
+      parameters:
+      - description: Number of days to look back (default 7, max 365).
+        in: query
+        name: days
+        required: false
+        schema:
+          type: integer
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+          description: Sales statistics
+      security:
+      - OpenIDConnect:
+        - biscuit_coffee_manager
+      summary: 'Manager: sales statistics'
+  # --- end staff operations ---
 components:
   schemas:
     SignUpLoyaltyRequest:
@@ -270,6 +564,9 @@ components:
     MenuItem:
       type: object
       properties:
+        available:
+          type: boolean
+          description: false means the item is sold out and cannot be ordered right now.
         id:
           type: string
           example: item-123
@@ -411,3 +708,4 @@ security:
   - OpenIDConnect:
       - biscuit_coffee_customer
       - biscuit_coffee_manager
+      - biscuit_coffee_staff

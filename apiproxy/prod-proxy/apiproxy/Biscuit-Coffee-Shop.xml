@@ -6,6 +6,7 @@
         <Policy>AM-SetBackendHeaders</Policy>
         <Policy>EV-GetId</Policy>
         <Policy>JS-GetFilter</Policy>
+        <Policy>RF-Invalid-Filter</Policy>
         <Policy>JWT-VerifyToken</Policy>
         <Policy>RF-Invalid-Scope</Policy>
         <!-- Maximum order value enforcement -->
@@ -28,6 +29,7 @@
         <!-- Consumer / end-user audit logging -->
         <Policy>AM-AuditEndUser</Policy>
         <Policy>AM-AuditRoleCustomer</Policy>
+        <Policy>AM-AuditRoleStaff</Policy>
         <Policy>AM-AuditRoleManager</Policy>
         <Policy>AE-AuditApp</Policy>
         <Policy>AE-AuditDeveloper</Policy>
@@ -36,6 +38,11 @@
         <Policy>JS-AuditAttributes</Policy>
         <Policy>ML-AuditLargeOrder</Policy>
         <Policy>ML-AuditJwtAccess</Policy>
+        <!-- Human-in-the-loop order approval (staff decide in the Staff app) -->
+        <Policy>AM-OrderPendingApproval</Policy>
+        <Policy>ML-AuditApprovalRequired</Policy>
+        <!-- Catch-all for undeclared paths -->
+        <Policy>RF-Unknown-Resource</Policy>
     </Policies>
 
     <ProxyEndpoints>

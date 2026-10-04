@@ -1,0 +1,30 @@
+{
+    "description": "Biscuit Coffee staff app (store staff + store manager). Used by Keycloak client biscuit-coffee-staff via key biscuit-coffee-staff on biscuit-coffee-admin-app. No per-tool quota, no maxOrderAmount, no approvalThreshold; the Biscuit-Coffee-Shop proxy enforces staff vs manager scopes per operation.",
+    "attributes": [
+        {
+            "name": "access",
+            "value": "internal"
+        },
+        {
+            "name": "enforceOrderOwnership",
+            "value": "false"
+        }
+    ],
+    "payloadOperationGroup": {
+        "operationConfigs": [
+            {"apiSource": "mcp-proxy-prod", "operations": [{"operation": "tools/list"}], "quota": {}},
+            {"apiSource": "mcp-proxy-prod", "operations": [{"operation": "tools/call/getStoreLocation"}], "quota": {}},
+            {"apiSource": "mcp-proxy-prod", "operations": [{"operation": "tools/call/getHoursOfOperation"}], "quota": {}},
+            {"apiSource": "mcp-proxy-prod", "operations": [{"operation": "tools/call/getMenu"}], "quota": {}},
+            {"apiSource": "mcp-proxy-prod", "operations": [{"operation": "tools/call/listAllOrders"}], "quota": {}},
+            {"apiSource": "mcp-proxy-prod", "operations": [{"operation": "tools/call/getAnyOrder"}], "quota": {}},
+            {"apiSource": "mcp-proxy-prod", "operations": [{"operation": "tools/call/updateOrderStatus"}], "quota": {}},
+            {"apiSource": "mcp-proxy-prod", "operations": [{"operation": "tools/call/decideOrder"}], "quota": {}},
+            {"apiSource": "mcp-proxy-prod", "operations": [{"operation": "tools/call/listEmployees"}], "quota": {}},
+            {"apiSource": "mcp-proxy-prod", "operations": [{"operation": "tools/call/getEmployee"}], "quota": {}},
+            {"apiSource": "mcp-proxy-prod", "operations": [{"operation": "tools/call/updateStoreHours"}], "quota": {}},
+            {"apiSource": "mcp-proxy-prod", "operations": [{"operation": "tools/call/updateMenuItem"}], "quota": {}},
+            {"apiSource": "mcp-proxy-prod", "operations": [{"operation": "tools/call/getSalesStats"}], "quota": {}}
+        ]
+    }
+}

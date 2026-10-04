@@ -6,6 +6,10 @@
     <Headers>
       <Header name="X-Correlation-Id"/>
       <Header name="X-Audit-Product"/>
+      <!-- Human-in-the-loop: the order status hint is set only by the gateway
+           (AM-OrderPendingApproval, which runs after this step). Anything the
+           caller sent is dropped so nobody can choose their own order status. -->
+      <Header name="X-Order-Status"/>
     </Headers>
   </Remove>
   <Set>

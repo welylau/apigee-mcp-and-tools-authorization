@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!--
+  Catch-all for any path/verb that no flow above matched.
+
+  Without it, an unmatched request (for example POST /internal/orders/approve)
+  would be forwarded to the Cloud Run backend carrying Apigee's own Google ID
+  token. Only the operations declared in the OpenAPI spec are exposed; anything
+  else stops here. Same {error, message} shape as the other refusals.
+-->
+<RaiseFault continueOnError="false" enabled="true" name="RF-Unknown-Resource">
+  <DisplayName>RF-Unknown-Resource</DisplayName>
+  <FaultResponse>
+    <Set>
+      <Headers>
+        <Header name="Content-Type">application/json</Header>
+      </Headers>
+      <Payload contentType="application/json">{
+  "error": "not_found",
+  "message": "That operation is not available."
+}</Payload>
+      <StatusCode>404</StatusCode>
+      <ReasonPhrase>Not Found</ReasonPhrase>
+    </Set>
+  </FaultResponse>
+  <IgnoreUnresolvedVariables>true</IgnoreUnresolvedVariables>
+</RaiseFault>

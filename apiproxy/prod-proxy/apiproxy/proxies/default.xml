@@ -4,9 +4,11 @@
   <FaultRules/>
   <PreFlow name="PreFlow">
     <Request>
+      <!-- Only the three exact public paths skip the JWT check. Anchored so that
+           e.g. /staff/store/hours (manager only) is NOT treated as public. -->
       <Step>
         <Name>JWT-VerifyToken</Name>
-        <Condition>not (proxy.pathsuffix ~~ ".*(/location|/hours|/menu)$")</Condition>
+        <Condition>not (proxy.pathsuffix ~~ "^/(location|hours|menu)/?$")</Condition>
       </Step>
       <!-- AUDIT: verified end-user identity + role from the Keycloak JWT. -->
       <Step>
@@ -18,6 +20,10 @@
         <Condition>(jwt.JWT-VerifyToken.valid = true) and (jwt.JWT-VerifyToken.claim.scope ~~ ".*\bbiscuit_coffee_customer\b.*")</Condition>
       </Step>
       <Step>
+        <Name>AM-AuditRoleStaff</Name>
+        <Condition>(jwt.JWT-VerifyToken.valid = true) and (jwt.JWT-VerifyToken.claim.scope ~~ ".*\bbiscuit_coffee_staff\b.*")</Condition>
+      </Step>
+      <Step>
         <Name>AM-AuditRoleManager</Name>
         <Condition>(jwt.JWT-VerifyToken.valid = true) and (jwt.JWT-VerifyToken.claim.scope ~~ ".*\bbiscuit_coffee_manager\b.*")</Condition>
       </Step>
@@ -26,6 +32,11 @@
       </Step>
       <Step>
         <Name>JS-GetFilter</Name>
+      </Step>
+      <!-- ?filter= is allow-listed (email, name, loyalty_id, status). -->
+      <Step>
+        <Name>RF-Invalid-Filter</Name>
+        <Condition>orderfilter.invalid = "true"</Condition>
       </Step>
     </Request>
     <Response/>
@@ -45,6 +56,12 @@
       <Step>
         <Name>ML-AuditJwtAccess</Name>
         <Condition>jwt.JWT-VerifyToken.valid = true</Condition>
+      </Step>
+      <!-- Human-in-the-loop audit: the order was saved as PENDING_APPROVAL and
+           now waits for a staff decision in the Staff app. -->
+      <Step>
+        <Name>ML-AuditApprovalRequired</Name>
+        <Condition>(order.requires_approval = "true") and (response.status.code = 200)</Condition>
       </Step>
     </Response>
   </PostClientFlow>
@@ -195,6 +212,10 @@
           <Condition>(response.status.code = 200) and (order.confirmation_ok = "true")</Condition>
           <Name>AM-OrderConfirmation</Name>
         </Step>
+        <!-- Human-in-the-loop: an order between approvalThreshold and the cap
+             was saved as PENDING_APPROVAL (AM-OrderPendingApproval in the
+             target PreFlow). Nothing else happens here: staff see it on the
+             Staff app orders board and approve/reject it with decideOrder. -->
       </Response>
       <Condition>(proxy.pathsuffix MatchesPath "/orders") and (request.verb = "POST")</Condition>
     </Flow>
@@ -262,6 +283,111 @@
       </Request>
       <Response/>
       <Condition>(proxy.pathsuffix MatchesPath "/orders/{order_id}") and (request.verb = "DELETE")</Condition>
+    </Flow>
+    <!-- ================= Staff app (/staff/*) =================
+         Staff operations need biscuit_coffee_staff OR biscuit_coffee_manager;
+         employee, store and stats operations need biscuit_coffee_manager.
+         These flows deliberately have NO ownership policies (JS-OwnershipFlags,
+         AM-PinOrderFilter, SC-GetOrderOwner): staff see every customer's
+         orders. The backend repeats the scope checks from X-User-Scope. -->
+    <Flow name="listAllOrders">
+      <Description>Staff: list all customers' orders</Description>
+      <Request>
+        <Step>
+          <Condition>!(jwt.JWT-VerifyToken.claim.scope ~~ ".*\bbiscuit_coffee_staff\b.*") and !(jwt.JWT-VerifyToken.claim.scope ~~ ".*\bbiscuit_coffee_manager\b.*")</Condition>
+          <Name>RF-Invalid-Scope</Name>
+        </Step>
+      </Request>
+      <Response/>
+      <Condition>(proxy.pathsuffix MatchesPath "/staff/orders") and (request.verb = "GET")</Condition>
+    </Flow>
+    <Flow name="getAnyOrder">
+      <Description>Staff: view any order</Description>
+      <Request>
+        <Step>
+          <Condition>!(jwt.JWT-VerifyToken.claim.scope ~~ ".*\bbiscuit_coffee_staff\b.*") and !(jwt.JWT-VerifyToken.claim.scope ~~ ".*\bbiscuit_coffee_manager\b.*")</Condition>
+          <Name>RF-Invalid-Scope</Name>
+        </Step>
+      </Request>
+      <Response/>
+      <Condition>(proxy.pathsuffix MatchesPath "/staff/orders/*") and (request.verb = "GET")</Condition>
+    </Flow>
+    <Flow name="updateOrderStatus">
+      <Description>Staff: update order progress</Description>
+      <Request>
+        <Step>
+          <Condition>!(jwt.JWT-VerifyToken.claim.scope ~~ ".*\bbiscuit_coffee_staff\b.*") and !(jwt.JWT-VerifyToken.claim.scope ~~ ".*\bbiscuit_coffee_manager\b.*")</Condition>
+          <Name>RF-Invalid-Scope</Name>
+        </Step>
+      </Request>
+      <Response/>
+      <Condition>(proxy.pathsuffix MatchesPath "/staff/orders/*/status") and (request.verb = "POST")</Condition>
+    </Flow>
+    <Flow name="decideOrder">
+      <Description>Staff: approve or reject an order waiting for approval</Description>
+      <Request>
+        <Step>
+          <Condition>!(jwt.JWT-VerifyToken.claim.scope ~~ ".*\bbiscuit_coffee_staff\b.*") and !(jwt.JWT-VerifyToken.claim.scope ~~ ".*\bbiscuit_coffee_manager\b.*")</Condition>
+          <Name>RF-Invalid-Scope</Name>
+        </Step>
+      </Request>
+      <Response/>
+      <Condition>(proxy.pathsuffix MatchesPath "/staff/orders/*/decision") and (request.verb = "POST")</Condition>
+    </Flow>
+    <Flow name="getEmployee">
+      <Description>Manager: employee details</Description>
+      <Request>
+        <Step>
+          <Condition>!(jwt.JWT-VerifyToken.claim.scope ~~ ".*\bbiscuit_coffee_manager\b.*")</Condition>
+          <Name>RF-Invalid-Scope</Name>
+        </Step>
+      </Request>
+      <Response/>
+      <Condition>(proxy.pathsuffix MatchesPath "/staff/employees/*") and (request.verb = "GET")</Condition>
+    </Flow>
+    <Flow name="updateStoreHours">
+      <Description>Manager: change opening hours for a day</Description>
+      <Request>
+        <Step>
+          <Condition>!(jwt.JWT-VerifyToken.claim.scope ~~ ".*\bbiscuit_coffee_manager\b.*")</Condition>
+          <Name>RF-Invalid-Scope</Name>
+        </Step>
+      </Request>
+      <Response/>
+      <Condition>(proxy.pathsuffix MatchesPath "/staff/store/hours") and (request.verb = "PUT")</Condition>
+    </Flow>
+    <Flow name="updateMenuItem">
+      <Description>Manager: change a menu item's price, name or sold-out flag</Description>
+      <Request>
+        <Step>
+          <Condition>!(jwt.JWT-VerifyToken.claim.scope ~~ ".*\bbiscuit_coffee_manager\b.*")</Condition>
+          <Name>RF-Invalid-Scope</Name>
+        </Step>
+      </Request>
+      <Response/>
+      <Condition>(proxy.pathsuffix MatchesPath "/staff/menu/*") and (request.verb = "PATCH")</Condition>
+    </Flow>
+    <Flow name="getSalesStats">
+      <Description>Manager: sales statistics</Description>
+      <Request>
+        <Step>
+          <Condition>!(jwt.JWT-VerifyToken.claim.scope ~~ ".*\bbiscuit_coffee_manager\b.*")</Condition>
+          <Name>RF-Invalid-Scope</Name>
+        </Step>
+      </Request>
+      <Response/>
+      <Condition>(proxy.pathsuffix MatchesPath "/staff/stats") and (request.verb = "GET")</Condition>
+    </Flow>
+    <!-- Catch-all: MUST stay the last flow. Anything not matched above is
+         refused here and never reaches the target. -->
+    <Flow name="unknownResource">
+      <Description>Refuse any path or verb not declared above</Description>
+      <Request>
+        <Step>
+          <Name>RF-Unknown-Resource</Name>
+        </Step>
+      </Request>
+      <Response/>
     </Flow>
 
   </Flows>

@@ -24,7 +24,7 @@
       </Headers>
       <Payload contentType="application/json">{
   "error": "order_limit_exceeded",
-  "message": "This order comes to ${order.total_display}, which is above the ${order.max_display} limit we can accept online. Please visit the shop to place a large order with our staff."
+  "message": "This order comes to ${order.total_display}, and online orders must be under ${order.max_display}. Please visit the shop to place a large order with our staff."
 }</Payload>
       <StatusCode>422</StatusCode>
       <ReasonPhrase>Unprocessable Entity</ReasonPhrase>

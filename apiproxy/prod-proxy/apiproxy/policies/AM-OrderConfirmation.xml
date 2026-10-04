@@ -11,12 +11,18 @@
 
   The agent relays `message` verbatim, so this policy is what the customer
   ultimately reads.
+
+  `status` (CONFIRMED | PENDING_APPROVAL) was added for the human-in-the-loop
+  approval flow so clients can react to a pending order without parsing the
+  sentence. The managed MCP tools declare no output schema, so the extra field
+  passes through untouched.
 -->
 <AssignMessage continueOnError="false" enabled="true" name="AM-OrderConfirmation">
   <DisplayName>AM-OrderConfirmation</DisplayName>
   <Set>
     <Payload contentType="application/json">{
   "order_id": "{orderres.order_id}",
+  "status": "{order.confirmation_status}",
   "message": "{order.confirmation_message}"
 }</Payload>
   </Set>
