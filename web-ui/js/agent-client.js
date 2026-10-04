@@ -7,14 +7,11 @@
 import { simulateAgentResponse } from './mock-agent.js';
 
 export class AdkAgentClient {
-  /** Display name for demo accounts whose token carries no name claim. */
+  /** Display name when the token carries no name claim: the email local part. */
   static fallbackName(email) {
     const e = String(email || '');
-    if (e.includes('manager')) return 'Alice (Manager)';
-    if (e.startsWith('staff')) return 'Sam Barista';
-    if (e.includes('customer2')) return 'Michael Bosh';
-    if (e.includes('customer')) return 'John Smith';
-    return e;
+    const local = e.split('@')[0];
+    return local ? local.charAt(0).toUpperCase() + local.slice(1) : e;
   }
 
   /** Random, unguessable guest id (the BFF only accepts guest-<16..64 alnum>). */
@@ -143,9 +140,6 @@ export class AdkAgentClient {
     try {
       if (userId) localStorage.removeItem(`biscuit_auth_${userId}`);
       localStorage.removeItem('biscuit_auth_active_session');
-      localStorage.removeItem('biscuit_auth_customer@biscuit-coffee.com');
-      localStorage.removeItem('biscuit_auth_customer2@biscuit-coffee.com');
-      localStorage.removeItem('biscuit_auth_manager@biscuit-coffee.com');
       if (this.userId) localStorage.removeItem(`biscuit_auth_${this.userId}`);
       for (let i = localStorage.length - 1; i >= 0; i--) {
         const key = localStorage.key(i);
@@ -777,8 +771,8 @@ export class AdkAgentClient {
     // The gateway returns the same 404 whether the order does not exist or
     // simply is not this customer's, so that the API cannot be used to discover
     // which order IDs are real; labelling one case differently here would put
-    // that oracle straight back. The real reason is available to the operator
-    // in the X-Debug-Reason response header and in a trace.
+    // that oracle straight back. Operators find the real reason in an Apigee
+    // trace; nothing here depends on response headers.
     if (innerText.includes('order_not_found') || respStr.includes('order_not_found')) {
       let message = '';
       try {
@@ -1000,7 +994,7 @@ export class AdkAgentClient {
     const toolCall = authCall || blocked || pending || calls[calls.length - 1] || null;
 
     if (toolCall && toolCall.isAuth) {
-      combinedText = `🔒 **Keycloak Authentication Required**\n\nThe AI Agent requires 3-legged OAuth authorization to execute tools on the Biscuit Coffee Apigee Gateway.\n\nPlease click the **Login** button below to authenticate.\n\n• **Customer 1 (John Smith)**: \`customer@biscuit-coffee.com\` (password: \`ilovecoffee\`)\n• **Customer 2 (Michael Bosh)**: \`customer2@biscuit-coffee.com\` (password: \`ilovecoffee\`)`;
+      combinedText = `🔒 **Keycloak Authentication Required**\n\nThe AI Agent requires 3-legged OAuth authorization to execute tools on the Biscuit Coffee Apigee Gateway.\n\nPlease click the **Login** button below and sign in with your customer account.`;
     } else if (!combinedText && relayText) {
       combinedText = relayText;
     } else if (!combinedText) {

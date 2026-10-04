@@ -13,15 +13,18 @@
 import {
   BOARD_COLUMNS, BULK_ACTIONS, BULK_CONFIRM_OVER, DATE_RANGES, DAYS, ORDER_FETCH_LIMIT, SELECTABLE_STATUSES,
   bucketOrders, bulkPlan, bulkSummary, decisionOutcome, extractList, extractOrders, filterByRange, formatMoney,
-  friendlyError, isSelectable, itemsSummary, maskPII, mergeOrders, newPendingOrders, nextActions, normalizeStatus, orderId,
+  friendlyError, hasKnownDate, isSelectable, itemsSummary, maskPII, mergeOrders, newPendingOrders, nextActions, normalizeStatus, orderId,
   pendingIds, pruneSelection, sortNewestFirst, validRange, validateHours, validatePrice,
 } from './staff-utils.js';
 import { StaffAlerts } from './staff-alerts.js';
 
 const BOARD_REFRESH_MS = 10000;
+// An open reject-reason input is left alone by background refreshes until it
+// has been idle this long; after that the board re-renders normally.
+const REJECT_EDIT_IDLE_MS = 60000;
 const LS_RANGE = 'biscuit.staff.orderRange';
 // Statuses the BFF accepts as expected_status (the "from" status of a change).
-const KNOWN_STATUS_RE = /^(PENDING_APPROVAL|IN_PROGRESS|READY|COMPLETED|COMPLETE|REJECTED|CANCELLED)$/;
+const KNOWN_STATUS_RE = /^(PENDING_APPROVAL|IN_PROGRESS|READY|COMPLETED|REJECTED|CANCELLED)$/;
 
 function lsGet(key) {
   try { return window.localStorage.getItem(key); } catch (e) { return null; }
@@ -65,6 +68,8 @@ export class StaffConsole {
     this.activeTab = 'orders';
     this.boardTimer = null;
     this.boardBusy = false;
+    this.refreshQueued = null; // {manual, force} requested while a refresh/bulk run was busy
+    this.rejectEdit = null;    // {id, card, input, lastActivity} while a reject reason is typed
     this.loaded = {};
     this.knownPending = null; // pending order ids at the last refresh (null = first load)
     this.selected = new Set(); // order ids ticked for bulk actions
@@ -273,8 +278,15 @@ export class StaffConsole {
       this.clearBoard('Sign in with a staff or store manager account to see the orders board.');
       return;
     }
-    if (this.boardBusy || this.bulkBusy) return;
+    if (this.boardBusy || this.bulkBusy) {
+      // Don't drop it: run one follow-up refresh when the current work ends
+      // (forced/manual requests win over background ones).
+      const q = this.refreshQueued || { manual: false, force: false };
+      this.refreshQueued = { manual: q.manual || manual, force: q.force || force };
+      return;
+    }
     this.boardBusy = true;
+    this.refreshQueued = null; // this run covers anything queued before it
     try {
       const r = await this.api('GET', `/api/staff/orders?limit=${ORDER_FETCH_LIMIT}`);
       if (!r.ok) {
@@ -294,15 +306,41 @@ export class StaffConsole {
       const orders = p.ok ? mergeOrders(recent, extractOrders(p.body.data)) : recent;
       if (!p.ok) console.warn('Pending-orders fetch failed:', p.status);
       this.allOrders = orders;
-      // A background refresh must not wipe a reject reason that is being typed.
-      const editing = !manual && !force && this.root.querySelector('.staff-card-actions input[type="text"]');
-      if (!editing) this.renderBoard(orders);
+      // A background refresh re-renders everything except the card whose reject
+      // reason is being typed (until it has been idle for REJECT_EDIT_IDLE_MS).
+      if (manual || force) this.rejectEdit = null;
+      this.renderBoard(orders, this.activeRejectEdit(orders));
       // Alerts and the counter look at ALL fetched orders, whatever the date filter.
       this.updateAlerts(orders);
       this.boardStamp.textContent = `Updated ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}`;
     } finally {
       this.boardBusy = false;
+      this.flushQueuedRefresh();
     }
+  }
+
+  /** Runs the refresh requested while the board was busy (at most one). */
+  flushQueuedRefresh() {
+    const q = this.refreshQueued;
+    if (!q || this.boardBusy || this.bulkBusy) return;
+    this.refreshQueued = null;
+    setTimeout(() => this.refreshBoard(q.manual, q.force), 0);
+  }
+
+  /**
+   * The reject edit to keep across this render, or null. Dropped when the input
+   * left the DOM, went idle, or the order is no longer pending.
+   */
+  activeRejectEdit(orders) {
+    const e = this.rejectEdit;
+    if (!e) return null;
+    const order = (orders || []).find((o) => orderId(o) === e.id);
+    const stillPending = order && normalizeStatus(order.status) === 'PENDING_APPROVAL';
+    if (!e.input.isConnected || !stillPending || Date.now() - e.lastActivity > REJECT_EDIT_IDLE_MS) {
+      this.rejectEdit = null;
+      return null;
+    }
+    return e;
   }
 
   updateAlerts(orders) {
@@ -329,8 +367,11 @@ export class StaffConsole {
     }
   }
 
-  renderBoard(orders) {
+  /** @param keep optional reject edit whose card node is reused as-is. */
+  renderBoard(orders, keep = null) {
     const all = orders || [];
+    const hadFocus = !!keep && document.activeElement === keep.input;
+    const caret = hadFocus ? [keep.input.selectionStart, keep.input.selectionEnd] : null;
     const visible = sortNewestFirst(filterByRange(all, this.range));
     this.visibleOrders = visible;
     const buckets = bucketOrders(visible);
@@ -339,7 +380,7 @@ export class StaffConsole {
       const items = buckets[c.key] || [];
       count.textContent = String(items.length);
       list.replaceChildren(...(items.length
-        ? items.map((o) => this.orderCard(o))
+        ? items.map((o) => (keep && orderId(o) === keep.id ? keep.card : this.orderCard(o)))
         : [el('div', { class: 'staff-empty', text: this.range === 'all' ? 'No orders' : 'No orders in this period' })]));
     }
 
@@ -354,6 +395,12 @@ export class StaffConsole {
         `${hiddenPending} older pending order${hiddenPending === 1 ? ' is' : 's are'} hidden by the date filter. `,
         el('button', { type: 'button', class: 'staff-link', text: 'Show all orders', onclick: () => this.setRange('all') }),
       );
+    }
+
+    // Moving the kept card through replaceChildren blurs its input: restore it.
+    if (hadFocus && keep.input.isConnected) {
+      keep.input.focus();
+      try { keep.input.setSelectionRange(caret[0], caret[1]); } catch (e) { /* not a text input */ }
     }
 
     // Selection survives refreshes: keep ids that are still visible and selectable.
@@ -448,6 +495,7 @@ export class StaffConsole {
       this.bulkBusy = false;
       this.bulkProgress.textContent = '';
     }
+    this.refreshQueued = null; // the refresh below supersedes anything queued
     const result = { done, skipped: plan.skipped, failed };
     setBanner(this.boardBanner, failed.length || plan.skipped.length ? 'warning' : 'success', bulkSummary(action.label, result));
     this.setSelection(new Set(failed.map((f) => f.id)));
@@ -484,6 +532,10 @@ export class StaffConsole {
         }) : null,
         el('strong', { class: 'staff-card-id', text: id ? `#${id}` : '(no id)' }),
         el('span', { class: `staff-status-tag s-${status.toLowerCase()}`, text: status.replace(/_/g, ' ') }),
+        hasKnownDate(order) ? null : el('span', {
+          class: 'staff-date-unknown', text: 'date unknown',
+          title: 'This order has no creation time, so it is shown under every date filter.',
+        }),
       ]),
       meta.length ? el('div', { class: 'staff-card-meta', text: meta.join(' · ') }) : null,
       el('div', { class: 'staff-card-items', text: itemsSummary(order) || '—' }),
@@ -506,6 +558,11 @@ export class StaffConsole {
     });
     const cancel = el('button', { type: 'button', class: 'staff-btn ghost', text: 'Back', onclick: () => this.refreshBoard(false, true) });
     actionsRow.replaceChildren(input, confirm, cancel);
+    const edit = { id, card: actionsRow.closest('.staff-card'), input, lastActivity: Date.now() };
+    const touch = () => { edit.lastActivity = Date.now(); };
+    input.addEventListener('input', touch);
+    input.addEventListener('focus', touch);
+    this.rejectEdit = edit.card ? edit : null;
     input.focus();
   }
 

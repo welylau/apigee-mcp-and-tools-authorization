@@ -215,13 +215,22 @@ export function sortNewestFirst(orders) {
     .map((x) => x.o);
 }
 
-/** Orders inside the range. "All orders" keeps everything, including orders without created_at. */
+/** False for orders without a usable created_at (e.g. seeded rows). */
+export function hasKnownDate(order) {
+  return !Number.isNaN(orderTime(order));
+}
+
+/**
+ * Orders inside the range. Orders without a usable created_at are kept in
+ * every range (the board tags them "date unknown") so they can't silently
+ * drop off the default "Today" view.
+ */
 export function filterByRange(orders, key, now = new Date()) {
   const start = rangeStart(key, now);
   if (start === null) return (orders || []).slice();
   return (orders || []).filter((o) => {
     const t = orderTime(o);
-    return !Number.isNaN(t) && t >= start;
+    return Number.isNaN(t) || t >= start;
   });
 }
 

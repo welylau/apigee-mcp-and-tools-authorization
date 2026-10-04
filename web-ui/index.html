@@ -83,6 +83,14 @@
       <!-- Status, Header Auth & Theme -->
       <div class="header-actions">
         <span class="staff-role-badge" id="staffRoleBadge" data-variant-only="staff" hidden></span>
+        <a class="header-clear-btn header-app-link" id="otherAppLink" href="#" target="_blank" rel="noopener noreferrer" hidden>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
+            <polyline points="15 3 21 3 21 9"></polyline>
+            <line x1="10" y1="14" x2="21" y2="3"></line>
+          </svg>
+          <span id="otherAppLinkText">Staff console</span>
+        </a>
         <button type="button" class="header-tour-btn" id="headerTourBtn" data-variant-only="customer" title="Open the interactive Guided Tour">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
             <polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"></polygon>
@@ -116,12 +124,13 @@
           </svg>
         </button>
 
-        <button type="button" class="settings-open-btn" id="settingsOpenBtn" data-variant-only="staff" data-role-only="manager" title="Settings: hosting info &amp; consumer audit logs" aria-haspopup="dialog" aria-controls="settingsDrawer" aria-expanded="false">
+        <button type="button" class="settings-open-btn" id="settingsOpenBtn" data-variant-only="staff" data-role-only="manager" title="Admin panel: gateway events, errors &amp; hosting" aria-haspopup="dialog" aria-controls="settingsDrawer" aria-expanded="false">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <circle cx="12" cy="12" r="3"></circle>
             <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
           </svg>
-          <span>Settings</span>
+          <span>Admin panel</span>
+          <span class="settings-err-badge" id="settingsErrBadge" hidden></span>
         </button>
       </div>
     </header>
@@ -444,6 +453,7 @@
           <button type="button" class="staff-tab" role="tab" data-staff-tab="employees" data-role-only="manager">👥 Employees</button>
           <button type="button" class="staff-tab" role="tab" data-staff-tab="store" data-role-only="manager">🏪 Store ops</button>
           <button type="button" class="staff-tab" role="tab" data-staff-tab="chat">💬 Staff assistant</button>
+          <button type="button" class="staff-tab staff-admin-tab" id="staffAdminTab" data-role-only="manager" aria-haspopup="dialog" aria-controls="settingsDrawer" title="Gateway events, errors &amp; hosting">🛡️ Admin panel <span class="settings-err-badge" id="staffAdminErrBadge" hidden></span></button>
         </nav>
         <div class="staff-console" id="staffConsole" data-variant-only="staff" hidden></div>
         <!-- MAIN CHAT LAYOUT -->
@@ -598,8 +608,8 @@
   <aside class="settings-drawer" id="settingsDrawer" role="dialog" aria-modal="true" aria-labelledby="settingsTitle" aria-hidden="true">
     <div class="settings-header">
       <div class="settings-title-group">
-        <div class="settings-title" id="settingsTitle">Settings</div>
-        <div class="settings-subtitle">Hosting topology &amp; Apigee consumer audit logs</div>
+        <div class="settings-title" id="settingsTitle">Admin panel</div>
+        <div class="settings-subtitle">Gateway events &amp; errors (Apigee consumer audit log) and hosting topology</div>
       </div>
       <div class="settings-header-actions">
         <button type="button" class="settings-icon-btn" id="settingsRefreshBtn" title="Refresh">
@@ -648,6 +658,7 @@
           <div class="logs-filters">
             <select id="logsEventFilter" class="logs-select" aria-label="Event type">
               <option value="all">All events</option>
+              <option value="errors">⚠ Errors (HTTP 4xx / 5xx)</option>
               <option value="quota_exceeded">Quota exceeded (429)</option>
               <option value="order_limit_exceeded">Large order blocked (422)</option>
               <option value="jwt_access">JWT access</option>

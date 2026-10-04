@@ -286,10 +286,6 @@ export class App {
   }
 
   initElements() {
-    // Role switcher tabs
-    this.customerTabBtn = document.getElementById('roleCustomerBtn');
-    this.managerTabBtn = document.getElementById('roleManagerBtn');
-
     // Auth Controls (Header & Sidebar)
     this.headerAuthBtn = document.getElementById('headerAuthBtn');
     this.headerAuthBtnText = document.getElementById('headerAuthBtnText');
@@ -311,14 +307,11 @@ export class App {
     this.publicSpecBox = document.getElementById('publicSpecBox');
     this.customerSpecBox = document.getElementById('customerSpecBox');
     this.customer2SpecBox = document.getElementById('customer2SpecBox');
-    this.managerSpecBox = document.getElementById('managerSpecBox');
 
     // Role prompt containers on the left panel
     this.publicPromptsContainer = document.getElementById('publicPromptsContainer');
     this.customerPromptsContainer = document.getElementById('customerPromptsContainer');
     this.customer2PromptsContainer = document.getElementById('customer2PromptsContainer');
-    this.managerPromptsContainer = document.getElementById('managerPromptsContainer');
-    this.promptChipsContainer = document.getElementById('promptChipsContainer');
     // Staff app (UI_VARIANT=staff)
     this.staffSpecBox = document.getElementById('staffSpecBox');
     this.staffManagerSpecBox = document.getElementById('staffManagerSpecBox');
@@ -350,12 +343,6 @@ export class App {
     this.sidebarPanel = document.querySelector('.sidebar-panel');
     this.sidebarResizer = document.getElementById('sidebarResizer');
 
-    // Dev-UI Toggle
-    this.modeLiveBtn = document.getElementById('modeLiveBtn');
-    this.modeDevUiBtn = document.getElementById('modeDevUiBtn');
-    this.iframeContainer = document.getElementById('iframeContainer');
-    this.chatLayoutArea = document.getElementById('chatLayoutArea');
-
     // Theme Toggle
     this.themeToggleBtn = document.getElementById('themeToggleBtn');
     this.themeIconSun = document.getElementById('themeIconSun');
@@ -363,11 +350,6 @@ export class App {
   }
 
   attachEventListeners() {
-    // Role switching (if switcher tabs are present)
-    if (this.customerTabBtn) {
-      this.customerTabBtn.addEventListener('click', () => this.switchRole(PERSONAS.customer));
-    }
-
     // Keycloak Auth Buttons (Header & Persona Sidebar)
     if (this.headerAuthBtn) {
       this.headerAuthBtn.addEventListener('click', () => this.handleAuthBtnClick());
@@ -449,14 +431,6 @@ export class App {
         }
       }
     });
-
-    // Mode Selection (if buttons exist)
-    if (this.modeLiveBtn) {
-      this.modeLiveBtn.addEventListener('click', () => this.setMode('auto'));
-    }
-    if (this.modeDevUiBtn) {
-      this.modeDevUiBtn.addEventListener('click', () => this.toggleDevUiIframe());
-    }
 
     // Periodic health check
     setInterval(() => this.checkBackendConnection(), 12000);
@@ -593,43 +567,6 @@ export class App {
     }
   }
 
-  setMode(mode) {
-    this.agentClient.setMode(mode);
-    if (this.modeLiveBtn) this.modeLiveBtn.classList.toggle('active', mode === 'auto');
-    if (this.modeDevUiBtn) this.modeDevUiBtn.classList.remove('active');
-    if (this.iframeContainer) this.iframeContainer.classList.remove('active');
-    if (this.chatLayoutArea) this.chatLayoutArea.style.display = 'flex';
-  }
-
-  toggleDevUiIframe() {
-    if (!this.iframeContainer) return;
-    const isActive = this.iframeContainer.classList.toggle('active');
-    if (this.modeDevUiBtn) this.modeDevUiBtn.classList.toggle('active', isActive);
-    if (isActive) {
-      if (this.modeLiveBtn) this.modeLiveBtn.classList.remove('active');
-      if (this.chatLayoutArea) this.chatLayoutArea.style.display = 'none';
-    } else {
-      if (this.chatLayoutArea) this.chatLayoutArea.style.display = 'flex';
-      this.setMode('auto');
-    }
-  }
-
-  async switchRole(persona) {
-    if (this.currentRole.id === persona.id) return;
-    this.currentRole = persona;
-    this.agentClient.setRole(persona);
-
-    this.renderRoleContext();
-    this.renderSuggestedPrompts();
-    await this.refreshAuthUI();
-
-    const activeToken = await this.agentClient.checkActiveToken(persona.email);
-    const statusNote = activeToken && activeToken.active ? 'Token **Active**' : '**Not Logged In**';
-
-    // Notify user in chat
-    this.addSystemNotice(`Switched target persona to **${persona.name}** (\`${persona.email}\`) with scope **${persona.scopeDescription}** — ${statusNote}.`);
-  }
-
   /** True when a staff/manager persona is signed in to the Staff app. */
   isStaffSignedIn() {
     return this.isStaffUi && (this.currentRole.id === 'staff' || this.currentRole.id === 'manager');
@@ -641,9 +578,6 @@ export class App {
     const isCustomer2 = this.currentRole.id === 'customer2';
     const isManager = this.currentRole.id === 'manager';
     const isStaff = this.currentRole.id === 'staff';
-
-    // Tabs (if present)
-    if (this.customerTabBtn) this.customerTabBtn.classList.toggle('active', isCustomer);
 
     // Body flags drive the CSS that hides manager-only staff panels. This is
     // cosmetic only: Apigee enforces the manager scope on every call.
@@ -718,7 +652,7 @@ export class App {
 
   renderSuggestedPrompts() {
     [this.publicPromptsContainer, this.customerPromptsContainer, this.customer2PromptsContainer,
-      this.managerPromptsContainer, this.promptChipsContainer, this.staffPromptsContainer,
+      this.staffPromptsContainer,
       this.staffManagerPromptsContainer].forEach(c => { if (c) c.replaceChildren(); });
 
     if (this.isStaffUi) {
@@ -1467,7 +1401,7 @@ export class App {
       if (activeToken && activeToken.active) {
         const remainingMs = Math.max(0, (activeToken.expiresAt || 0) - Date.now());
         const remainingMins = Math.max(1, Math.round(remainingMs / 60000));
-        const email = activeToken.userinfo?.email || activeToken.claims?.email || activeToken.claims?.preferred_username || this.agentClient.userId || 'customer@biscuit-coffee.com';
+        const email = activeToken.userinfo?.email || activeToken.claims?.email || activeToken.claims?.preferred_username || this.agentClient.userId || '';
         let name = activeToken.userinfo?.name || activeToken.claims?.name || activeToken.claims?.preferred_username;
         if (!name || name === email) {
           name = AdkAgentClient.fallbackName ? AdkAgentClient.fallbackName(email) : email;
@@ -1740,6 +1674,18 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   window.coffeeApp = new App(uiConfig);
+
+  // Header link to the other app (customer <-> staff); hidden when unset.
+  const otherLink = document.getElementById('otherAppLink');
+  const otherUrl = window.coffeeApp.otherAppUrl();
+  if (otherLink && otherUrl) {
+    otherLink.href = otherUrl;
+    const label = isStaff ? 'Customer app' : 'Staff console';
+    const labelEl = document.getElementById('otherAppLinkText');
+    if (labelEl) labelEl.textContent = label;
+    otherLink.title = `Open the ${label} in a new tab`;
+    otherLink.hidden = false;
+  }
   // Settings drawer authenticates to the BFF with the signed-in user's token;
   // checkActiveToken() refreshes it first when it is close to expiry.
   new SettingsPanel(async () => {

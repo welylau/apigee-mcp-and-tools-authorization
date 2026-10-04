@@ -17,7 +17,7 @@ const SEEN_KEY = 'biscuitTour.seenThisSession';
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const resolve = (v, ...args) => (typeof v === 'function' ? v(...args) : v);
 const CLOSE_BTN = '<button type="button" class="tour-close" data-act="dismiss" title="Close (Esc)" aria-label="Close tour">×</button>';
-const PERSONA_LABEL = { guest: 'Guest (logged out)', customer: 'Customer (John)', customer2: 'Customer 2 (Michael)', manager: 'Store Manager (Alice)' };
+const PERSONA_LABEL = { guest: 'Guest (logged out)', customer: 'Customer (John)', customer2: 'Customer 2 (Michael)' };
 
 export class GuidedTour {
   constructor(app) {
@@ -162,7 +162,19 @@ export class GuidedTour {
     window.addEventListener('resize', reflow);
     window.addEventListener('scroll', reflow, true);
     // Sidebar content and drawers move around; keep the spotlight glued on.
-    setInterval(() => {
+    // The ticker only runs while a step / explainer is on screen (ensureTicker).
+    this.ticker = 0;
+  }
+
+  /** Start the 300 ms layout ticker; it stops itself once the tour is idle. */
+  ensureTicker() {
+    if (this.ticker) return;
+    this.ticker = setInterval(() => {
+      if (!['step', 'explainer', 'finished'].includes(this.mode)) {
+        clearInterval(this.ticker);
+        this.ticker = 0;
+        return;
+      }
       this.syncDrawerState();
       if (this.mode === 'step') this.position();
     }, 300);
@@ -210,6 +222,7 @@ export class GuidedTour {
     // Login and chat steps happen in the main UI: get the Settings drawer out of the way.
     if (s.kind === 'persona' || s.kind === 'prompt') this.closeSettings();
     this.mode = 'step';
+    this.ensureTicker();
     this.hint = '';
     this.promptStaged = false;
     this.explainer.hidden = true;
@@ -283,6 +296,7 @@ export class GuidedTour {
         <button type="button" class="tour-btn tour-btn-primary" data-act="close">Continue exploring</button>
       </div>`;
     this.mode = 'finished';
+    this.ensureTicker();
     this.explainer.hidden = false;
     this.explainer.querySelector('[data-act="restart"]').onclick = () => this.start(0, true);
     this.explainer.querySelectorAll('[data-act="close"], [data-act="dismiss"]').forEach((b) => {
@@ -462,6 +476,7 @@ export class GuidedTour {
   showExplainer() {
     const m = this.mission, ex = m.explainer || {};
     this.mode = 'explainer';
+    this.ensureTicker();
     this.spot.hidden = true; this.dim.hidden = true;
     this.pop.hidden = true;
     this.renderStepper();

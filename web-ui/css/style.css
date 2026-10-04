@@ -486,6 +486,15 @@ html, body {
   transform: translateY(-1px);
 }
 
+/* Cross-app link (customer <-> staff) reuses the header button look. */
+.header-app-link { text-decoration: none; }
+.header-app-link[hidden] { display: none !important; }
+.header-app-link:hover {
+  background: rgba(66, 133, 244, 0.1);
+  border-color: var(--google-blue);
+  color: var(--google-blue);
+}
+
 /* Sidebar Role Switcher (Moved from Header) */
 .sidebar-switcher {
   width: 100%;
@@ -1066,6 +1075,8 @@ body.is-resizing-sidebar iframe {
 .chat-container {
   display: flex;
   flex-direction: column;
+  flex: 1 1 auto;
+  min-width: 0;
   background: var(--bg-primary);
   height: 100%;
   overflow: hidden;

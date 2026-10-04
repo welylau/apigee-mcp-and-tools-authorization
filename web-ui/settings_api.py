@@ -50,10 +50,13 @@ RANGES = {
     "30d": (timedelta(days=30), timedelta(days=1)),
 }
 EVENTS = ("quota_exceeded", "order_limit_exceeded", "jwt_access",
-          # Human-in-the-loop order approval. approval_trigger_failed is legacy
-          # (the Application Integration call was removed) but kept so older
-          # log entries can still be filtered.
+          # Human-in-the-loop order approval. approval_trigger_failed is a
+          # legacy event name, kept so older log entries can still be filtered.
           "approval_required", "approval_trigger_failed")
+# Pseudo-filter for the event dropdown: every entry whose HTTP status is an
+# error (4xx/5xx), whatever its event name.
+ERRORS_FILTER = "errors"
+RECENT_ERRORS = 8
 PAGE_SIZES = (10, 25, 50)
 MAX_ENTRIES = 5000          # hard cap per range snapshot (5 x 1000 API pages)
 LOG_CACHE_TTL = 30          # seconds
@@ -347,7 +350,9 @@ def _normalize(entry):
     role_verified = bool(role)
     if not role and user:
         scopes = (user.get("scope") or "").split()
-        role = "manager" if "biscuit_coffee_manager" in scopes else ("customer" if scopes else "")
+        role = ("manager" if "biscuit_coffee_manager" in scopes
+                else "staff" if "biscuit_coffee_staff" in scopes
+                else "customer" if scopes else "")
     if not user:
         role = "anonymous"
     return {
@@ -424,26 +429,37 @@ def _parse_ts(ts):
         return None
 
 
+def is_error(entry):
+    """HTTP 4xx/5xx response recorded by the gateway."""
+    s = entry.get("status") or ""
+    return s.isdigit() and int(s) >= 400
+
+
 def _timeline(entries, range_key):
     span, step = RANGES[range_key]
     now = datetime.now(timezone.utc)
     start = now - span
     n = int(span / step)
-    buckets = [{"start": (start + step * i).isoformat(), **{e: 0 for e in EVENTS}} for i in range(n)]
+    buckets = [{"start": (start + step * i).isoformat(), "errors": 0, **{e: 0 for e in EVENTS}} for i in range(n)]
     for e in entries:
         t = _parse_ts(e["ts"] or "")
         if not t:
             continue
         idx = int((t - start) / step)
-        if 0 <= idx < n and e["event"] in EVENTS:
+        if not 0 <= idx < n:
+            continue
+        if e["event"] in EVENTS:
             buckets[idx][e["event"]] += 1
+        if is_error(e):
+            buckets[idx]["errors"] += 1
     return {"stepSeconds": int(step.total_seconds()), "buckets": buckets}
 
 
 def _aggregate(entries, range_key):
     total = len(entries)
     statuses = Counter(e["status"] or "n/a" for e in entries)
-    denied = sum(c for s, c in statuses.items() if s.isdigit() and int(s) >= 400)
+    errors = [e for e in entries if is_error(e)]  # newest first (entries are timestamp desc)
+    denied = len(errors)
     violations = [e for e in entries if e["event"] in ("quota_exceeded", "order_limit_exceeded")]
     order_totals = []
     for e in entries:
@@ -456,6 +472,12 @@ def _aggregate(entries, range_key):
     def top(key, n=6, src=entries):
         return [{"label": k, "count": c} for k, c in Counter(e[key] for e in src if e[key]).most_common(n)]
 
+    def path_label(e):
+        return (e["tool"] or f'{e["verb"]} {e["path"]}').strip()
+
+    def status_is(e, *codes):
+        return e["status"] in codes
+
     return {
         "kpis": {
             "total": total,
@@ -463,6 +485,11 @@ def _aggregate(entries, range_key):
             "quotaExceeded": sum(1 for e in entries if e["event"] == "quota_exceeded"),
             "largeOrders": sum(1 for e in entries if e["event"] == "order_limit_exceeded"),
             "deniedRate": round(100.0 * denied / total, 1) if total else 0.0,
+            "errors": denied,
+            "authErrors": sum(1 for e in errors if status_is(e, "401", "403")),
+            "rateLimited": sum(1 for e in errors if status_is(e, "429")),
+            "serverErrors": sum(1 for e in errors if int(e["status"]) >= 500),
+            "lastErrorAt": errors[0]["ts"] if errors else None,
             "uniqueUsers": len({e["userSub"] or e["user"] for e in entries if e["userSub"] or e["user"]}),
             "uniqueApps": len({e["clientId"] or e["app"] for e in entries if e["clientId"] or e["app"]}),
             "maxRejectedOrder": max(order_totals) if order_totals else None,
@@ -472,11 +499,15 @@ def _aggregate(entries, range_key):
         "byEnvironment": top("environment"),
         "byProxy": top("proxy"),
         "byStatus": [{"label": k, "count": c} for k, c in sorted(statuses.items())],
+        "errorsByStatus": [{"label": k, "count": c} for k, c in sorted(Counter(e["status"] for e in errors).items())],
+        "errorPaths": [{"label": k, "count": c} for k, c in Counter(
+            path_label(e) for e in errors if e["tool"] or e["path"]).most_common(6)],
+        "recentErrors": errors[:RECENT_ERRORS],
         "topUsers": top("user"),
         "topViolators": top("user", src=violations),
         "topClients": top("clientId"),
         "topPaths": [{"label": k, "count": c} for k, c in Counter(
-            (e["tool"] or f'{e["verb"]} {e["path"]}').strip() for e in entries if e["tool"] or e["path"]).most_common(6)],
+            path_label(e) for e in entries if e["tool"] or e["path"]).most_common(6)],
         "timeline": _timeline(entries, range_key),
     }
 
@@ -487,7 +518,7 @@ def audit_logs(params):
     if range_key not in RANGES:
         range_key = "1d"
     event = (params.get("event") or ["all"])[0]
-    if event not in EVENTS:
+    if event not in EVENTS and event != ERRORS_FILTER:
         event = "all"
     env = (params.get("env") or ["all"])[0]
     if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", env or ""):
@@ -506,17 +537,24 @@ def audit_logs(params):
         with _lock:
             _log_cache.pop(range_key, None)
 
+    def event_ok(e):
+        if event == "all":
+            return True
+        if event == ERRORS_FILTER:
+            return is_error(e)
+        return e["event"] == event
+
     entries, truncated, fetched_at = _fetch_range(range_key)
     environments = sorted({e["environment"] for e in entries if e["environment"]})
-    filtered = [e for e in entries
-                if (event == "all" or e["event"] == event) and (env == "all" or e["environment"] == env)]
+    filtered = [e for e in entries if event_ok(e) and (env == "all" or e["environment"] == env)]
     pages = max(1, -(-len(filtered) // page_size))
     page = min(page, pages)
     rows = filtered[(page - 1) * page_size: page * page_size]
 
     return {
         "range": range_key,
-        "filters": {"event": event, "env": env, "environments": environments, "events": list(EVENTS)},
+        "filters": {"event": event, "env": env, "environments": environments,
+                    "events": list(EVENTS) + [ERRORS_FILTER]},
         "logName": f"projects/{PROJECT}/logs/{AUDIT_LOG_ID}",
         "fetchedAt": datetime.fromtimestamp(fetched_at, tz=timezone.utc).isoformat(),
         "truncated": truncated,

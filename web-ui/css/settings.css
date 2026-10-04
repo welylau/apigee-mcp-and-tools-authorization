@@ -386,3 +386,30 @@
 .pager-btn.active { background: var(--google-blue); border-color: var(--google-blue); color: #fff; }
 .pager-btn:disabled { opacity: 0.45; cursor: not-allowed; }
 .pager-ellipsis { padding: 0 4px; line-height: 28px; }
+
+/* ---------- admin panel: errors ---------- */
+.settings-err-badge {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 18px; height: 18px; padding: 0 5px; margin-left: 4px;
+  border-radius: 9px;
+  background: var(--danger); color: #fff;
+  font-size: 11px; font-weight: 700; line-height: 1;
+}
+.settings-err-badge[hidden] { display: none; }
+.staff-admin-tab { margin-left: auto; }
+.kpi-clickable { cursor: pointer; }
+.kpi-clickable:hover, .kpi-clickable:focus-visible { border-color: var(--danger); outline: none; }
+.err-list { display: flex; flex-direction: column; gap: 4px; }
+.err-row {
+  display: grid; grid-template-columns: 48px minmax(0, 2fr) minmax(0, 1.4fr) auto 64px;
+  align-items: center; gap: 10px;
+  padding: 6px 8px; border-radius: var(--radius-sm);
+  border-left: 3px solid var(--danger);
+  background: var(--danger-bg);
+  font-size: 12px; cursor: pointer;
+}
+.err-row:hover, .err-row:focus-visible { outline: 1px solid var(--danger); }
+.err-what, .err-who { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.err-when { text-align: right; }
+.s-row-error td:first-child { box-shadow: inset 3px 0 0 var(--danger); }
+.legend-swatch.legend-line { height: 3px; border-radius: 2px; }

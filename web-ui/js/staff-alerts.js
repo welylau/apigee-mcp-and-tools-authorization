@@ -1,8 +1,8 @@
 /**
  * Staff app alerts for orders waiting for approval.
  *
- * Approvals happen only in the Staff app (there is no email any more), so the
- * app has to get attention by itself:
+ * Approvals happen only in the Staff app, so the app has to get attention by
+ * itself:
  *  - a counter on the "Orders board" tab and next to the role badge in the header
  *  - the count in document.title, e.g. "(2) Biscuit Coffee ..."
  *  - a toast when a new pending order appears (not on the first load)

@@ -97,7 +97,15 @@ SETTINGS_LOCK = threading.Lock()
 SETTINGS_RATE_LIMIT = int(os.environ.get("SETTINGS_RATE_LIMIT", "60"))  # requests / minute / user
 PRINCIPAL_CACHE = {}
 
-SSL_CTX = ssl._create_unverified_context()
+# Keycloak TLS is verified (the nip.io host has a publicly trusted cert).
+# KEYCLOAK_TLS_INSECURE=1 is a local-only escape hatch for a self-signed IdP;
+# it is never set on Cloud Run.
+KEYCLOAK_TLS_INSECURE = os.environ.get("KEYCLOAK_TLS_INSECURE", "") == "1"
+if KEYCLOAK_TLS_INSECURE:
+    print("WARNING: KEYCLOAK_TLS_INSECURE=1, Keycloak certificates are NOT verified.", file=sys.stderr)
+    SSL_CTX = ssl._create_unverified_context()
+else:
+    SSL_CTX = ssl.create_default_context()
 
 # Order approval watcher (GET /api/orders/<id>/status). The browser polls this
 # every 10 s while an order is PENDING_APPROVAL; the BFF asks Apigee's getOrder
@@ -112,12 +120,17 @@ ADK_PROC = None
 # ---------------------------------------------------------------------------
 # Rate limiting. Buckets are keyed on the verified Keycloak subject once the
 # caller is authenticated ("sub:<id>"); anonymous traffic (guests, failed
-# auth) is keyed on the left-most X-Forwarded-For entry (the client as seen by
-# Cloud Run's front end) or the socket address locally. Stale keys are pruned.
+# auth, oauth endpoints) is keyed on the X-Forwarded-For hop appended by
+# Google's front end (see CoffeeShopHandler._client_key), or the socket
+# address locally. Stale keys are pruned.
 # ---------------------------------------------------------------------------
 ADK_RATE_LIMIT = int(os.environ.get("ADK_RATE_LIMIT", "120"))            # ADK calls / minute / caller
 AUTH_FAIL_RATE_LIMIT = int(os.environ.get("AUTH_FAIL_RATE_LIMIT", "30"))  # failed auths / minute / client
 OAUTH_RATE_LIMIT = int(os.environ.get("OAUTH_RATE_LIMIT", "30"))          # oauth calls / minute / client
+try:
+    XFF_CLIENT_HOP = max(1, int(os.environ.get("XFF_CLIENT_HOP", "1")))
+except ValueError:
+    XFF_CLIENT_HOP = 1
 RATE_BUCKETS = {}
 _RATE_PRUNED_AT = [0.0]
 
@@ -312,11 +325,21 @@ ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 HHMM_RE = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 EMAIL_FILTER_RE = re.compile(r"^[A-Za-z0-9._%+@-]{1,254}$")
 DAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
-ORDER_STATUS_FILTERS = ("PENDING_APPROVAL", "IN_PROGRESS", "READY", "COMPLETED", "COMPLETE", "REJECTED", "CANCELLED")
+ORDER_STATUS_FILTERS = ("PENDING_APPROVAL", "IN_PROGRESS", "READY", "COMPLETED", "REJECTED", "CANCELLED")
+# Legacy seed rows use "COMPLETE"; accept it as input and treat it as COMPLETED.
+ORDER_STATUS_ALIASES = {"COMPLETE": "COMPLETED"}
 ORDER_PROGRESS_STATUSES = ("IN_PROGRESS", "READY", "COMPLETED", "CANCELLED")
 MENU_PRICE_MIN, MENU_PRICE_MAX = 0.5, 100.0
-TOOLS_CACHE = {"at": 0.0, "schemas": None}
+# tools/list depends on the API Product Apigee resolves for the caller (the
+# x-api-key client and the token's azp), so cache entries are keyed on both.
+# A token from another client can never read or overwrite this client's entry.
+TOOLS_CACHE = {}
 TOOLS_CACHE_TTL = 60
+
+
+def normalize_order_status(value):
+    status = str(value or "").strip().upper()
+    return ORDER_STATUS_ALIASES.get(status, status)
 
 _I = r"([A-Za-z0-9_-]{1,64})"
 STAFF_ROUTES = [
@@ -335,7 +358,11 @@ STAFF_ROUTES = [
 
 
 class InputError(ValueError):
-    pass
+    """Client input failed validation. The message is our own and safe to show."""
+
+
+class BodyTooLarge(InputError):
+    """Request body over the endpoint's cap (HTTP 413)."""
 
 
 def _q1(params, name):
@@ -359,7 +386,7 @@ def _expected_status(body):
     raw = body.get("expected_status")
     if raw in (None, ""):
         return ""
-    expected = str(raw).upper()
+    expected = normalize_order_status(raw)
     if expected not in ORDER_STATUS_FILTERS:
         raise InputError("expected_status is not a known order status.")
     return expected
@@ -372,7 +399,7 @@ def build_staff_call(action, groups, params, body):
     """
     if action == "list_orders":
         query = {}
-        status = _q1(params, "status").upper()
+        status = normalize_order_status(_q1(params, "status"))
         if status:
             if status not in ORDER_STATUS_FILTERS:
                 raise InputError("Unknown order status filter.")
@@ -391,7 +418,7 @@ def build_staff_call(action, groups, params, body):
     if action == "get_order":
         return "getAnyOrder", [(groups[0], ["order_id", "id", "orderId"])], {}, None
     if action == "order_status":
-        status = str(body.get("status") or "").upper()
+        status = normalize_order_status(body.get("status"))
         if status not in ORDER_PROGRESS_STATUSES:
             raise InputError(f"status must be one of {', '.join(ORDER_PROGRESS_STATUSES)}.")
         payload = {"status": status}
@@ -517,30 +544,70 @@ def _short(text, limit=300):
 
 
 def classify_tool_error(tool, text, body):
-    """-> (http_status, error_code, message) for a failed tools/call."""
+    """-> (http_status, error_code, client_message) for a failed tools/call.
+
+    The status comes from structured fields (body.status / statusCode / code)
+    or an anchored "HTTP 403" / "status: 403" pattern, never from any 3-digit
+    number in free text (order ids, amounts). Raw upstream text is logged
+    server-side only; the client gets the upstream's structured `message`
+    when there is one, otherwise a generic sentence.
+    """
     blob = (text or "")[:4000]
     lower = blob.lower()
+    status = _structured_status(body, blob)
+    if status is None:
+        if "insufficient_scope" in lower or "required permissions" in lower:
+            status = 403
+        elif "order_not_found" in lower:
+            status = 404
+        elif "invalid_token" in lower:
+            status = 401
+        elif re.search(r"\bnot pending\b|\bconflict\b", lower):
+            status = 409
+        elif re.search(r"\bquota\b|\brate limit", lower):
+            status = 429
+    kind, http_status = {
+        400: ("rejected", 400), 422: ("rejected", 400), 401: ("unauthorized", 401),
+        403: ("forbidden", 403), 404: ("not_found", 404), 409: ("conflict", 409),
+        429: ("rate_limited", 429),
+    }.get(status, ("upstream_error", 502))
     msg = ""
     if isinstance(body, dict):
-        for k in ("message", "error_description", "detail", "error"):
+        for k in ("message", "error_description", "detail"):
             if isinstance(body.get(k), str) and body.get(k).strip():
-                msg = body[k]
+                msg = _short(body[k], 200)
                 break
-    msg = _short(msg or blob) or "The gateway refused the request."
-    if "insufficient_scope" in lower or "required permissions" in lower or "forbidden" in lower \
-            or re.search(r"\b403\b", blob):
-        return 403, "forbidden", msg
-    if "order_not_found" in lower or re.search(r"\b404\b", blob):
-        return 404, "not_found", msg
-    if re.search(r"\b409\b", blob) or "conflict" in lower or "not pending" in lower:
-        return 409, "conflict", msg
-    if re.search(r"\b429\b", blob) or "quota" in lower or "rate limit" in lower:
-        return 429, "rate_limited", msg
-    if re.search(r"\b401\b", blob) or "invalid_token" in lower or "unauthorized" in lower:
-        return 401, "unauthorized", msg
-    if re.search(r"\b400\b", blob) or re.search(r"\b422\b", blob):
-        return 400, "rejected", msg
-    return 502, "upstream_error", msg
+    if not msg:
+        msg = GENERIC_TOOL_MESSAGES.get(http_status, GENERIC_TOOL_MESSAGES[502])
+    print(f"🧾 tool {tool} failed -> {http_status} {kind}: {_short(blob, 300)}", flush=True)
+    return http_status, kind, msg
+
+
+GENERIC_TOOL_MESSAGES = {
+    400: "The gateway rejected the request.",
+    401: "Your session has expired. Please sign in again.",
+    403: "Apigee refused this request for your role or API product.",
+    404: "Not found.",
+    409: "The order changed in the meantime. Refresh and try again.",
+    429: "Too many requests. Please slow down.",
+    502: "The gateway returned an error.",
+}
+_ANCHORED_STATUS_RE = re.compile(
+    r"\s*(?:HTTP(?:/[\d.]+)?\s+|(?:status|error)(?:[ _]?code)?\s*[:=]?\s*)?([45]\d\d)(?=[\s:,)]|$)", re.I)
+_LABELLED_STATUS_RE = re.compile(
+    r"(?:\bHTTP/[\d.]+\s+|\bstatus[ _]?code\s*[:=]\s*|\"status(?:Code)?\"\s*:\s*)([45]\d\d)\b", re.I)
+
+
+def _structured_status(body, text):
+    if isinstance(body, dict):
+        for k in ("status", "statusCode", "status_code", "code", "httpStatus"):
+            v = body.get(k)
+            if isinstance(v, int) and not isinstance(v, bool) and 400 <= v < 600:
+                return v
+            if isinstance(v, str) and re.fullmatch(r"[45]\d\d", v.strip()):
+                return int(v)
+    m = _ANCHORED_STATUS_RE.match(text or "") or _LABELLED_STATUS_RE.search(text or "")
+    return int(m.group(1)) if m else None
 
 
 def tool_unavailable(tool):
@@ -561,40 +628,62 @@ def mcp_rpc(method, params, auth, timeout=20):
         with urllib.request.urlopen(req, context=APIGEE_SSL_CTX, timeout=timeout) as resp:
             raw = resp.read(1024 * 1024).decode("utf-8", "replace")
     except urllib.error.HTTPError as e:
-        detail = _short(e.read(4096).decode("utf-8", "replace"), 200)
+        detail = _short(e.read(4096).decode("utf-8", "replace"), 300)
+        print(f"🧾 MCP {method} HTTP {e.code}: {detail}", flush=True)
         status = {401: 401, 403: 403, 404: 404, 429: 429}.get(e.code, 502)
-        msgs = {401: "Your session has expired. Please sign in again.",
-                403: "Apigee refused this request for your role or API product.",
-                429: "Too many requests. Please slow down."}
         return None, (status, {"error": "upstream", "status": e.code,
-                               "message": msgs.get(status) or detail or "Gateway error."})
-    except Exception:
+                               "message": GENERIC_TOOL_MESSAGES.get(status, GENERIC_TOOL_MESSAGES[502])})
+    except Exception as e:
+        print(f"🧾 MCP {method} unreachable: {type(e).__name__}", flush=True)
         return None, (502, {"error": "upstream_unreachable", "message": "The Apigee gateway is unreachable."})
     payload = parse_mcp_response(raw)
     if payload is None:
+        print(f"🧾 MCP {method} returned an unparseable body ({len(raw)} bytes)", flush=True)
         return None, (502, {"error": "bad_upstream_body", "message": "Unexpected response from the gateway."})
     return payload, None
 
 
+def mcp_tool_result(payload):
+    """tools/call payload -> (result dict, joined text, parsed JSON | None)."""
+    result = payload.get("result") or {}
+    text = "\n".join(p["text"] for p in (result.get("content") or [])
+                     if isinstance(p, dict) and isinstance(p.get("text"), str))
+    try:
+        data = json.loads(text) if text else {}
+    except ValueError:
+        data = None
+    return result, text, data
+
+
+def _tools_cache_key(auth):
+    token = auth[7:].strip() if auth.startswith("Bearer ") else ""
+    azp = str(jwt_claims_unverified(token).get("azp") or "")
+    return f"{UI_VARIANT}|{KEYCLOAK_CLIENT_ID}|{azp}"
+
+
 def tool_schemas(auth, force=False):
-    """name -> inputSchema from tools/list (cached), or None if unknown."""
+    """-> (name -> inputSchema from tools/list or None if unknown, fetched_at)."""
+    key = _tools_cache_key(auth)
     now = time.time()
-    if not force and TOOLS_CACHE["schemas"] is not None and now - TOOLS_CACHE["at"] < TOOLS_CACHE_TTL:
-        return TOOLS_CACHE["schemas"]
+    with SETTINGS_LOCK:
+        entry = TOOLS_CACHE.get(key)
+    if entry and not force and now - entry["at"] < TOOLS_CACHE_TTL:
+        return entry["schemas"], entry["at"]
     payload, err = mcp_rpc("tools/list", {}, auth)
     if err or "error" in payload:
-        return TOOLS_CACHE["schemas"]
+        return (entry["schemas"], entry["at"]) if entry else (None, 0.0)
     tools = (payload.get("result") or {}).get("tools") or []
     schemas = {t.get("name"): (t.get("inputSchema") or {}) for t in tools if isinstance(t, dict) and t.get("name")}
-    TOOLS_CACHE.update(at=now, schemas=schemas)
-    return schemas
+    with SETTINGS_LOCK:
+        TOOLS_CACHE[key] = {"at": now, "schemas": schemas}
+    return schemas, now
 
 
 def call_staff_tool(tool, path_params, query, body, auth):
     """-> (http_status, json_body)."""
-    schemas = tool_schemas(auth)
-    if schemas is not None and tool not in schemas and time.time() - TOOLS_CACHE["at"] > 10:
-        schemas = tool_schemas(auth, force=True)   # newly deployed tools show up quickly
+    schemas, fetched_at = tool_schemas(auth)
+    if schemas is not None and tool not in schemas and time.time() - fetched_at > 10:
+        schemas, fetched_at = tool_schemas(auth, force=True)   # newly deployed tools show up quickly
     if schemas is not None and tool not in schemas:
         return tool_unavailable(tool)
     args = build_tool_args(tool, (schemas or {}).get(tool), path_params, query, body)
@@ -609,13 +698,7 @@ def call_staff_tool(tool, path_params, query, body, auth):
             return tool_unavailable(tool)
         status, kind, msg = classify_tool_error(tool, emsg, None)
         return status, {"error": kind, "tool": tool, "message": msg}
-    result = payload.get("result") or {}
-    text = "\n".join(p["text"] for p in (result.get("content") or [])
-                     if isinstance(p, dict) and isinstance(p.get("text"), str))
-    try:
-        data = json.loads(text) if text else {}
-    except ValueError:
-        data = None
+    result, text, data = mcp_tool_result(payload)
     if result.get("isError") or (isinstance(data, dict) and isinstance(data.get("error"), str)
                                  and not data.get("status") and not data.get("order_id")):
         if re.search(r"tool .*not found|unknown tool", text or "", re.I):
@@ -808,10 +891,22 @@ class CoffeeShopHandler(http.server.SimpleHTTPRequestHandler):
         self._send_json(404, {'error': 'not_found'})
 
     def _client_key(self):
-        """Anonymous rate-limit key: left-most X-Forwarded-For, else socket IP."""
-        xff = (self.headers.get('X-Forwarded-For') or '').split(',')[0].strip()
-        if xff and re.fullmatch(r'[0-9A-Fa-f:.]{2,45}', xff):
-            return 'ip:' + xff
+        """Anonymous rate-limit key (authenticated callers are keyed on 'sub:').
+
+        On Cloud Run, Google's front end APPENDS the address it saw to
+        X-Forwarded-For, so everything left of that entry is client-supplied
+        and spoofable. We take the entry XFF_CLIENT_HOP positions from the
+        right (default 1 = right-most, correct for *.run.app; set 2 behind an
+        external Application Load Balancer, which appends its own IP last).
+        Locally (no K_SERVICE) the header is ignored and the socket IP is used.
+        """
+        if not _LOCAL:
+            hops = [h.strip() for h in (self.headers.get('X-Forwarded-For') or '').split(',') if h.strip()]
+            idx = XFF_CLIENT_HOP
+            if len(hops) >= idx:
+                ip = hops[-idx]
+                if re.fullmatch(r'[0-9A-Fa-f:.]{2,45}', ip):
+                    return 'ip:' + ip
         return 'ip:' + self.client_address[0]
 
     def handle_ui_config(self):
@@ -830,23 +925,11 @@ class CoffeeShopHandler(http.server.SimpleHTTPRequestHandler):
 
     def handle_agent_info(self):
         """Report the live agent runtime configuration so the UI never hardcodes it."""
-        model = MODEL_NAME
-
-        # Fallback: read MODEL_NAME straight out of the repo .env if it wasn't exported.
-        if not model:
-            env_path = os.path.abspath(os.path.join(DIRECTORY, "..", ".env"))
-            if os.path.isfile(env_path):
-                with open(env_path, "r") as ef:
-                    for line in ef:
-                        line = line.strip()
-                        if line.startswith("MODEL_NAME") and "=" in line:
-                            model = line.split("=", 1)[1].strip().strip('"').strip("'")
-                            break
-
+        # MODEL_NAME comes from the environment (or the .env files loaded at startup).
         self._send_json(200, {
             "agentName": "biscuit_coffee_staff_agent" if IS_STAFF_UI else "biscuit_coffee_agent",
             "framework": "Google ADK",
-            "model": model or "unknown",
+            "model": MODEL_NAME or "unknown",
             "gatewayEnabled": True,
             "gatewayHostname": APIGEE_PROD_HOSTNAME,
             "adkLive": is_adk_running(),
@@ -883,22 +966,39 @@ class CoffeeShopHandler(http.server.SimpleHTTPRequestHandler):
     # ------------------------------------------------------------------
     # Staff API (staff variant only). Same-origin (no CORS headers).
     # ------------------------------------------------------------------
-    def _read_json_body(self, limit=4096):
-        try:
-            length = int(self.headers.get('Content-Length', 0) or 0)
-        except ValueError:
+    def _read_body_bytes(self, limit):
+        """Read the request body, at most `limit` bytes. Raises BodyTooLarge /
+        InputError. Chunked or missing lengths are treated as empty."""
+        raw_len = (self.headers.get('Content-Length') or '').strip()
+        if not raw_len:
+            return b''
+        if not raw_len.isdigit() or len(raw_len) > 12:
+            self.close_connection = True
             raise InputError("Bad Content-Length.")
+        length = int(raw_len)
         if length > limit:
-            raise InputError("Request body too large.")
-        if length <= 0:
+            # Never read (or buffer) an oversized body; drop the connection.
+            self.close_connection = True
+            raise BodyTooLarge(f"Request body exceeds {limit} bytes.")
+        return self.rfile.read(length) if length else b''
+
+    def _read_json_body(self, limit=4096):
+        raw = self._read_body_bytes(limit)
+        if not raw:
             return {}
         try:
-            body = json.loads(self.rfile.read(length).decode('utf-8'))
+            body = json.loads(raw.decode('utf-8'))
         except (ValueError, UnicodeDecodeError):
             raise InputError("Body must be JSON.")
         if not isinstance(body, dict):
             raise InputError("Body must be a JSON object.")
         return body
+
+    def _send_body_error(self, e, code='invalid_input'):
+        if isinstance(e, BodyTooLarge):
+            self._send_json(413, {'error': 'payload_too_large', 'message': 'Request body too large.'})
+        else:
+            self._send_json(400, {'error': code, 'message': str(e)})
 
     def handle_staff_api(self, method):
         if not IS_STAFF_UI:
@@ -928,7 +1028,7 @@ class CoffeeShopHandler(http.server.SimpleHTTPRequestHandler):
             tool, path_params, query, tool_body = build_staff_call(
                 route, groups, urllib.parse.parse_qs(self.route_query), body)
         except InputError as e:
-            self._send_json(400, {'error': 'invalid_input', 'message': str(e)})
+            self._send_body_error(e)
             return
         try:
             status, out = call_staff_tool(tool, path_params, query, tool_body, self.headers.get('Authorization', ''))
@@ -984,14 +1084,12 @@ class CoffeeShopHandler(http.server.SimpleHTTPRequestHandler):
         req = urllib.request.Request(f"{KEYCLOAK_BASE}/protocol/openid-connect/userinfo")
         req.add_header('Authorization', f'Bearer {token}')
         try:
-            # TODO(security): SSL_CTX skips certificate verification (inherited
-            # from the existing OAuth handlers, Keycloak runs on a nip.io host).
-            # Pin the Keycloak CA before using this outside a demo.
             with urllib.request.urlopen(req, context=SSL_CTX, timeout=10) as resp:
-                userinfo = json.loads(resp.read().decode('utf-8') or '{}')
+                userinfo = json.loads(resp.read(65536).decode('utf-8') or '{}')
         except urllib.error.HTTPError as e:
             return None, 401 if e.code in (401, 403) else 503
-        except Exception:
+        except Exception as e:
+            print(f"🔑 Keycloak userinfo unreachable: {type(e).__name__}: {_short(e, 160)}", flush=True)
             return None, 503
         if not isinstance(userinfo, dict):
             return None, 503
@@ -1039,36 +1137,23 @@ class CoffeeShopHandler(http.server.SimpleHTTPRequestHandler):
         payload, err = mcp_rpc('tools/call', {'name': 'getOrder', 'arguments': {'id': order_id}},
                                self.headers.get('Authorization', ''), timeout=15)
         if err:
-            upstream = err[1].get('status') if isinstance(err[1], dict) else None
             code = {401: 401, 403: 401, 429: 429}.get(err[0], 502)
-            self._send_json(code, {'error': 'upstream', 'status': upstream or err[0]})
+            self._send_json(code, {'error': 'upstream', 'status': code})
             return
 
-        result = payload.get('result') or {}
-        text = ''
-        for part in result.get('content') or []:
-            if isinstance(part, dict) and isinstance(part.get('text'), str):
-                text = part['text']
-                break
-        try:
-            body = json.loads(text) if text else {}
-        except ValueError:
-            body = {}
-        if not isinstance(body, dict):
-            body = {}
-
+        _result, text, body = mcp_tool_result(payload)
+        body = body if isinstance(body, dict) else {}
         if body.get('error') == 'order_not_found':
             self._send_json(404, {'error': 'order_not_found'})
             return
-        if 'error' in payload or result.get('isError') or not body.get('status'):
-            blob = (text or json.dumps(payload))[:2000]
-            forbidden = 'insufficient_scope' in blob or 'required permissions' in blob
-            self._send_json(403 if forbidden else 502, {'error': 'forbidden' if forbidden else 'upstream_error'})
+        if 'error' in payload or _result.get('isError') or not body.get('status'):
+            status, kind, _msg = classify_tool_error('getOrder', text or json.dumps(payload.get('error')), body)
+            self._send_json(403 if status == 403 else 502, {'error': 'forbidden' if status == 403 else 'upstream_error'})
             return
 
         approval = body.get('approval') if isinstance(body.get('approval'), dict) else {}
         total = body.get('total_amount')
-        status = str(body.get('status'))[:32]
+        status = normalize_order_status(body.get('status'))[:32]
         # The staff's rejection reason is shown to the customer. It is free text
         # typed in the Staff app, so only plain characters are passed on: control
         # and markdown/HTML characters are removed and the length is capped.
@@ -1107,19 +1192,23 @@ class CoffeeShopHandler(http.server.SimpleHTTPRequestHandler):
                     else f"http://localhost:{PORT}"
                 runtime = {
                     'localUrl': local_url,
-                    'bindHost': BIND_HOST,
-                    'port': PORT,
-                    'adkBackend': ADK_BACKEND,
                     'adkLive': is_adk_running(),
                     'model': MODEL_NAME or 'unknown',
                     'gatewayHostname': APIGEE_PROD_HOSTNAME,
-                    'keycloakBase': KEYCLOAK_BASE,
                     'keycloakClientId': KEYCLOAK_CLIENT_ID,   # client id only, never the secret
-                    'pythonVersion': sys.version.split()[0],
                     'container': os.path.exists('/.dockerenv') or bool(os.environ.get('K_SERVICE')),
                     'cloudRunService': os.environ.get('K_SERVICE', ''),
-                    'cloudRunRevision': os.environ.get('K_REVISION', ''),
                 }
+                if principal['manager']:
+                    # Infrastructure details are for the store manager only.
+                    runtime.update({
+                        'bindHost': BIND_HOST,
+                        'port': PORT,
+                        'adkBackend': ADK_BACKEND,
+                        'keycloakBase': KEYCLOAK_BASE,
+                        'pythonVersion': sys.version.split()[0],
+                        'cloudRunRevision': os.environ.get('K_REVISION', ''),
+                    })
                 refresh = (params.get('refresh') or ['0'])[0] == '1'
                 data = settings_api.hosting_info(runtime, refresh=refresh)
                 data['viewer'] = {'manager': principal['manager']}
@@ -1131,7 +1220,8 @@ class CoffeeShopHandler(http.server.SimpleHTTPRequestHandler):
                     return
                 self._send_json(200, settings_api.audit_logs(params))
         except settings_api.UpstreamError as e:
-            self._send_json(502, {'error': 'upstream', 'message': str(e)})
+            print(f"⚠️ Settings upstream error: {e}", flush=True)
+            self._send_json(502, {'error': 'upstream', 'message': 'Settings data is temporarily unavailable.'})
         except Exception as e:
             print(f"🚨 Settings handler error: {type(e).__name__}: {e}", flush=True)
             self._send_json(500, {'error': 'internal', 'message': 'Unexpected error.'})
@@ -1148,7 +1238,7 @@ class CoffeeShopHandler(http.server.SimpleHTTPRequestHandler):
         try:
             return self._read_json_body(16384)
         except InputError as e:
-            self._send_json(400, {'error': 'invalid_request', 'message': str(e)})
+            self._send_body_error(e, 'invalid_request')
             return None
 
     def _redirect_uri_ok(self, redirect_uri):
@@ -1178,8 +1268,12 @@ class CoffeeShopHandler(http.server.SimpleHTTPRequestHandler):
             # A 400 invalid_grant on refresh is normal: the refresh token expired
             # (30 min idle) or the session was revoked.
             print(f"🔑 Keycloak {kind} rejected: HTTP {e.code} {code} {desc}", flush=True)
+            safe_code = code if code in ('invalid_grant', 'invalid_request', 'invalid_client',
+                                         'unauthorized_client', 'invalid_scope') else 'token_request_failed'
+            msg = ('Your sign-in has expired or was already used. Please sign in again.'
+                   if safe_code == 'invalid_grant' else 'Sign-in failed. Please try again.')
             self._send_json(e.code if e.code in (400, 401) else 502,
-                            {'error': code, 'error_description': desc, 'message': desc or code})
+                            {'error': safe_code, 'error_description': msg, 'message': msg})
         except Exception as e:
             print(f"🚨 Keycloak {kind} failed: {type(e).__name__}", flush=True)
             self._send_json(502, {'error': 'idp_unreachable', 'message': 'Identity provider unreachable.'})
@@ -1343,6 +1437,19 @@ class CoffeeShopHandler(http.server.SimpleHTTPRequestHandler):
             return 401, {'error': 'unauthorized', 'message': 'Sign in to use this account.'}
         return None
 
+    @staticmethod
+    def _adk_error_body(code):
+        """Generic client body for an ADK error (the ADK body is only logged)."""
+        if code == 404:
+            body = {'error': 'session_not_found', 'message': 'Session not found.'}
+        elif code in (400, 422):
+            body = {'error': 'bad_request', 'message': 'The agent runtime rejected the request.'}
+        elif code == 429:
+            body = {'error': 'rate_limited', 'message': 'The agent is busy. Please try again shortly.'}
+        else:
+            body = {'error': 'agent_error', 'message': 'The agent hit an error. Please try again.'}
+        return json.dumps(body).encode('utf-8')
+
     def _adk_call(self, method, path, data, timeout=30, accept='application/json'):
         """-> (status, body bytes, content type). Only safe headers are sent."""
         req = urllib.request.Request(f"{ADK_BACKEND.rstrip('/')}{path}", data=data, method=method)
@@ -1355,7 +1462,8 @@ class CoffeeShopHandler(http.server.SimpleHTTPRequestHandler):
         except urllib.error.HTTPError as e:
             content = e.read(64 * 1024)
             print(f"🚨 ADK HTTP {e.code} on {method} {path}: {_short(content.decode('utf-8', 'replace'), 300)}", flush=True)
-            return e.code, content, 'application/json'
+            code = e.code if 400 <= e.code < 500 else 502
+            return code, self._adk_error_body(code), 'application/json'
         except Exception as e:
             print(f"🚨 ADK unreachable on {method} {path}: {type(e).__name__}", flush=True)
             return 502, json.dumps({'error': 'adk_unreachable',
@@ -1437,7 +1545,7 @@ class CoffeeShopHandler(http.server.SimpleHTTPRequestHandler):
                 try:
                     self._read_json_body(4096)   # drained; never forwarded (no client-chosen state)
                 except InputError as e:
-                    self._send_json(400, {'error': 'bad_request', 'message': str(e)})
+                    self._send_body_error(e, 'bad_request')
                     return
                 status, raw, ctype = self._adk_call('POST', path, b'{}')
             else:
@@ -1452,7 +1560,7 @@ class CoffeeShopHandler(http.server.SimpleHTTPRequestHandler):
         try:
             body = self._read_json_body(ADK_RUN_BODY_LIMIT)
         except InputError as e:
-            self._send_json(400, {'error': 'bad_request', 'message': str(e)})
+            self._send_body_error(e, 'bad_request')
             return
         payload, err = self._build_run_payload(body, ident, streaming=(kind == 'run_sse'))
         if err:
@@ -1476,7 +1584,8 @@ class CoffeeShopHandler(http.server.SimpleHTTPRequestHandler):
         except urllib.error.HTTPError as e:
             content = e.read(64 * 1024)
             print(f"🚨 ADK HTTP {e.code} on POST {target_path}: {_short(content.decode('utf-8', 'replace'), 300)}", flush=True)
-            self._send_raw(e.code, content)
+            code = e.code if 400 <= e.code < 500 else 502
+            self._send_raw(code, self._adk_error_body(code))
             return
         except Exception as e:
             print(f"🚨 ADK unreachable on POST {target_path}: {type(e).__name__}", flush=True)

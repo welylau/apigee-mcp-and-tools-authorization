@@ -187,6 +187,14 @@ body[data-ui-variant="staff"] #chatLayoutArea { height: auto !important; flex: 1
 .staff-status-tag.s-in_progress { background: var(--google-blue-subtle); color: var(--google-blue); }
 .staff-status-tag.s-ready { background: var(--success-bg); color: var(--success); }
 .staff-status-tag.s-rejected, .staff-status-tag.s-cancelled { background: var(--danger-bg); color: var(--danger); }
+.staff-date-unknown {
+  font: 600 10px var(--font-sans);
+  padding: 1px 6px;
+  border: 1px dashed var(--text-muted);
+  border-radius: var(--radius-full);
+  color: var(--text-muted);
+  white-space: nowrap;
+}
 
 /* Buttons & inputs */
 .staff-btn {

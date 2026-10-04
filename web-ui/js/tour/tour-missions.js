@@ -8,7 +8,7 @@
  *   kind        'action' | 'prompt' | 'persona' | 'click'
  *   title/body  coachmark copy (body is trusted, authored HTML)
  *   target      CSS selector, or (engine) => selector, for the spotlight
- *   requires    persona ids allowed for this step (guest|customer|customer2|manager)
+ *   requires    persona ids allowed for this step (guest|customer|customer2)
  *   prompt      text (or ctx => text) placed in the chat box by "Use this prompt"
  *   action      { label, run(engine) } for the primary button on non-prompt steps
  *   expect      short "Expected:" line
@@ -17,13 +17,13 @@
  *   skipIf(ctx, engine)  auto-skip the step when already satisfied
  */
 
+// Only the customer demo logins the tour's sign-in steps need. Staff and
+// store-manager credentials are deliberately NOT shipped in the customer app.
 const PASSWORD = 'ilovecoffee';
 
 export const ACCOUNTS = {
   customer: { label: 'Customer · John Smith', user: 'customer@biscuit-coffee.com', pass: PASSWORD },
   customer2: { label: 'Customer 2 · Michael Bosh', user: 'customer2@biscuit-coffee.com', pass: PASSWORD },
-  manager: { label: 'Store Manager · Alice (Staff app)', user: 'manager@biscuit-coffee.com', pass: PASSWORD },
-  staff: { label: 'Staff · Sam Barista (Staff app)', user: 'staff@biscuit-coffee.com', pass: PASSWORD },
 };
 
 /** Numeric HTTP status from a tool card, e.g. '403 Forbidden' -> 403. */
