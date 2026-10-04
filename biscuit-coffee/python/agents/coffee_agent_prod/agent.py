@@ -1,6 +1,8 @@
+import json
 import logging
 import os
 import re
+from collections import OrderedDict
 from typing import Any, Optional
 
 from dotenv import load_dotenv
@@ -8,6 +10,8 @@ from google.adk.agents import Agent
 from google.adk.agents.callback_context import CallbackContext
 from google.adk.agents.readonly_context import ReadonlyContext
 from google.adk.models.llm_response import LlmResponse
+from google.adk.tools.base_tool import BaseTool
+from google.adk.tools.tool_context import ToolContext
 from google.genai import types as genai_types
 
 from biscuit_common import (
@@ -150,30 +154,96 @@ relay_gateway_message = make_relay_callback(gateway_message)
 # cappuccinos" after "11 large cappuccinos") the model can copy it WITHOUT
 # calling placeOrder - showing an order ID and total that do not exist.
 #
-# If model-written text claims an order was placed/confirmed and no placeOrder
-# response exists in the current invocation, replace it with an honest reply.
-# Partial (streamed) chunks are buffered per invocation and suppressed once the
-# claim appears, so the fake sentence is not streamed into the bubble either.
+# How it works:
+#   * after_tool_callback (record_tool_result) writes a per-invocation record
+#     into `temp:` session state: whether a placeOrder SUCCEEDED this turn
+#     (order_id present, not isError), whether an order lookup ran, and every
+#     order-id-like number seen in this turn's tool results. `temp:` keys are
+#     never persisted, and the record also carries the invocation id.
+#   * after_model_callback (block_fake_order_confirmation): if model-written
+#     text claims an order was placed/confirmed, it is allowed only when a
+#     placeOrder succeeded or an order lookup ran this turn, AND every order
+#     id the text mentions came from a tool result of this turn. Otherwise the
+#     text is replaced with an honest reply.
+#   * Streamed (partial) chunks are buffered per invocation in a small bounded
+#     cache and suppressed once the claim appears.
 # ---------------------------------------------------------------------------
 FAKE_CONFIRMATION = re.compile(
-    r"order is confirmed|order id is\s*\**\s*#?\d|has been placed|now pending approval", re.I
+    r"order (?:is|was|has been) (?:now )?(?:confirmed|placed|submitted|created)"
+    r"|has been placed"
+    r"|(?:i|we)(?:'ve| have)? (?:just |now |successfully )?(?:placed|submitted|created|put in)"
+    r" (?:your|the|an?|this) (?:new )?order"
+    r"|order\s*(?:id|number|no\.?|#)\s*(?:is|:|=)?\s*\**\s*#?\d"
+    r"|order\s+#\s*\d"
+    r"|#\d{4,}\**\s+(?:is\s+)?(?:confirmed|placed)"
+    r"|(?:now|is) pending approval",
+    re.I,
 )
+ORDER_ID_IN_TEXT = re.compile(r"(?<![\d.$])#?(\d{4,6})(?!\d|\.\d)")
+ORDER_LOOKUP_TOOLS = {"getOrder", "listOrders", "cancelOrder"}
+GUARD_STATE_KEY = "temp:order_guard"
 FAKE_CONFIRMATION_REPLY = (
     "Sorry, I couldn't place that order just now - no order was created. "
     "Please ask me again and I'll place it for you."
 )
-_partial_text: dict[str, str] = {}
+
+PARTIAL_CACHE_MAX = 256
+_partial_text: "OrderedDict[str, str]" = OrderedDict()
 
 
-def _placed_order_this_turn(callback_context: CallbackContext) -> bool:
-    inv = callback_context._invocation_context
-    for ev in inv.session.events or []:
-        if ev.invocation_id != inv.invocation_id:
-            continue
-        for fr in ev.get_function_responses() or []:
-            if fr.name == "placeOrder":
-                return True
-    return False
+def _is_successful_order(tool_response: Any) -> bool:
+    if not isinstance(tool_response, dict) or tool_response.get("isError"):
+        return False
+    if mcp_failure_message(tool_response) or tool_response.get("error"):
+        return False
+    body = content_json(tool_response) or {}
+    return bool(body.get("order_id")) and not body.get("error")
+
+
+def record_tool_result(tool: BaseTool, tool_context: ToolContext, tool_response: Any) -> None:
+    """Remember what this turn's tools returned (for the guard)."""
+    inv_id = tool_context.invocation_id
+    rec = tool_context.state.get(GUARD_STATE_KEY)
+    if not isinstance(rec, dict) or rec.get("inv") != inv_id:
+        rec = {"inv": inv_id, "placed": False, "lookup": False, "ids": []}
+    else:
+        rec = {**rec, "ids": list(rec.get("ids") or [])}
+    if tool.name == "placeOrder" and _is_successful_order(tool_response):
+        rec["placed"] = True
+    if tool.name in ORDER_LOOKUP_TOOLS:
+        rec["lookup"] = True
+    try:
+        blob = json.dumps(tool_response, default=str)
+    except (TypeError, ValueError):
+        blob = str(tool_response)
+    rec["ids"] = sorted(set(rec["ids"]) | set(ORDER_ID_IN_TEXT.findall(blob)))[:500]
+    tool_context.state[GUARD_STATE_KEY] = rec
+
+
+def after_tool(
+    tool: BaseTool, args: dict, tool_context: ToolContext, tool_response: Any
+) -> Optional[dict]:
+    """after_tool_callback: record for the guard, then the gateway relay."""
+    try:
+        record_tool_result(tool, tool_context, tool_response)
+    except Exception:  # noqa: BLE001 - the guard must never break a tool call
+        logger.exception("order guard: could not record tool result")
+    return relay_gateway_message(tool, args, tool_context, tool_response)
+
+
+def _guard_record(callback_context: CallbackContext) -> dict:
+    rec = callback_context.state.get(GUARD_STATE_KEY)
+    if isinstance(rec, dict) and rec.get("inv") == callback_context.invocation_id:
+        return rec
+    return {}
+
+
+def claim_is_backed(text: str, rec: dict) -> bool:
+    """True when an order claim in `text` is backed by this turn's tool results."""
+    if not (rec.get("placed") or rec.get("lookup")):
+        return False
+    mentioned = set(ORDER_ID_IN_TEXT.findall(text))
+    return mentioned <= set(rec.get("ids") or [])
 
 
 def _text_of(llm_response: LlmResponse) -> str:
@@ -183,21 +253,27 @@ def _text_of(llm_response: LlmResponse) -> str:
     return "".join(p.text for p in parts if p.text and not p.thought)
 
 
+def _buffer_partial(inv_id: str, text: str) -> str:
+    seen = _partial_text.pop(inv_id, "") + text
+    _partial_text[inv_id] = seen[-4000:]
+    while len(_partial_text) > PARTIAL_CACHE_MAX:
+        _partial_text.popitem(last=False)  # drop the oldest (e.g. aborted streams)
+    return seen
+
+
 def block_fake_order_confirmation(
     callback_context: CallbackContext, llm_response: LlmResponse
 ) -> Optional[LlmResponse]:
     inv_id = callback_context.invocation_id
     text = _text_of(llm_response)
     if llm_response.partial:
-        seen = _partial_text.get(inv_id, "") + text
-        _partial_text[inv_id] = seen
-        text = seen
+        text = _buffer_partial(inv_id, text)
     else:
         _partial_text.pop(inv_id, None)
 
     if not text or not FAKE_CONFIRMATION.search(text):
         return None
-    if _placed_order_this_turn(callback_context):
+    if claim_is_backed(text, _guard_record(callback_context)):
         return None
 
     if llm_response.partial:
@@ -206,7 +282,7 @@ def block_fake_order_confirmation(
             content=genai_types.Content(role="model", parts=[genai_types.Part(text="")]),
             partial=True,
         )
-    logger.warning("Blocked an order confirmation written without a placeOrder call: %r", text[:200])
+    logger.warning("Blocked an order confirmation not backed by a tool result: %r", text[:200])
     return LlmResponse(
         content=genai_types.Content(role="model", parts=[genai_types.Part(text=FAKE_CONFIRMATION_REPLY)])
     )
@@ -220,7 +296,7 @@ Use the customer's first name when you know it.""",
     instruction=get_instruction,
     description="An online agent for Biscuit Coffee.",
     tools=[mcp_toolset, get_current_time],
-    after_tool_callback=relay_gateway_message,
+    after_tool_callback=after_tool,
     after_model_callback=block_fake_order_confirmation,
     on_tool_error_callback=make_tool_not_found_callback(),
     generate_content_config=GENERATE_CONTENT_CONFIG,

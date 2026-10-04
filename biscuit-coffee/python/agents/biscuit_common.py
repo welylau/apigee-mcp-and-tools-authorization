@@ -12,8 +12,9 @@ import json
 import logging
 import os
 import re
-from datetime import datetime
+from datetime import datetime, timedelta, timezone, tzinfo
 from typing import Any, Callable, Iterable, Optional
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import httpx
 from dotenv import load_dotenv
@@ -249,10 +250,27 @@ def make_mcp_toolset(api_key: str, tool_filter: Optional[Iterable[str]] = None) 
     )
 
 
+STORE_TIMEZONE_DEFAULT = "Asia/Singapore"
+# Used only if the container has no IANA tz database (Singapore has no DST).
+_FALLBACK_TZ = timezone(timedelta(hours=8))
+
+
+def _store_tz() -> tuple[tzinfo, str]:
+    name = (os.getenv("STORE_TIMEZONE") or STORE_TIMEZONE_DEFAULT).strip()
+    for candidate in (name, STORE_TIMEZONE_DEFAULT):
+        try:
+            return ZoneInfo(candidate), candidate
+        except (ZoneInfoNotFoundError, ValueError):
+            logger.warning("Time zone %r not available", candidate)
+    return _FALLBACK_TZ, STORE_TIMEZONE_DEFAULT
+
+
 def get_current_time() -> str:
-    """Returns the current local time for the coffee shop assistant."""
-    now = datetime.now()
-    return now.strftime("%A, %B %d, %Y %I:%M %p")
+    """Returns the current local time at the Biscuit Coffee store (store time zone)."""
+    tz, label = _store_tz()
+    now = datetime.now(tz)
+    offset = now.strftime("%z")
+    return f"{now.strftime('%A, %B %d, %Y %I:%M %p')} (store time, {label}, UTC{offset[:3]}:{offset[3:]})"
 
 
 # ---------------------------------------------------------------------------
