@@ -4,11 +4,57 @@
   <FaultRules/>
   <PreFlow name="PreFlow">
     <Request>
+      <!-- Never trust policy headers from the caller. Cap, threshold and the
+           ownership toggle are resolved below from the VERIFIED token. -->
+      <Step>
+        <Name>AM-StripInboundPolicyHeaders</Name>
+      </Step>
       <!-- Only the three exact public paths skip the JWT check. Anchored so that
            e.g. /staff/store/hours (manager only) is NOT treated as public. -->
       <Step>
         <Name>JWT-VerifyToken</Name>
         <Condition>not (proxy.pathsuffix ~~ "^/(location|hours|menu)/?$")</Condition>
+      </Step>
+      <!-- Which API Product governs this caller? Chosen from the verified azp
+           claim via the azp-products property set. Unknown client = 403. -->
+      <Step>
+        <Name>JS-ResolveProduct</Name>
+        <Condition>jwt.JWT-VerifyToken.valid = true</Condition>
+      </Step>
+      <Step>
+        <Name>RF-Client-Not-Allowed</Name>
+        <Condition>(jwt.JWT-VerifyToken.valid = true) and (product.known != "true")</Condition>
+      </Step>
+      <!-- Per-user burst protection (30/min per JWT sub) on every authenticated flow. -->
+      <Step>
+        <Name>SA-PerUser</Name>
+        <Condition>jwt.JWT-VerifyToken.valid = true</Condition>
+      </Step>
+      <Step>
+        <Name>RF-Too-Many-Requests</Name>
+        <Condition>(jwt.JWT-VerifyToken.valid = true) and (ratelimit.SA-PerUser.failed = true)</Condition>
+      </Step>
+      <!-- Product attributes (maxOrderAmount, approvalThreshold,
+           enforceOrderOwnership), read by this proxy and cached 60s. -->
+      <Step>
+        <Name>LC-ProductAttrs</Name>
+        <Condition>jwt.JWT-VerifyToken.valid = true</Condition>
+      </Step>
+      <Step>
+        <Name>AE-ApiProduct</Name>
+        <Condition>(jwt.JWT-VerifyToken.valid = true) and (lookupcache.LC-ProductAttrs.cachehit != true)</Condition>
+      </Step>
+      <Step>
+        <Name>JS-ProductAttrs</Name>
+        <Condition>jwt.JWT-VerifyToken.valid = true</Condition>
+      </Step>
+      <Step>
+        <Name>RF-Product-Unavailable</Name>
+        <Condition>(jwt.JWT-VerifyToken.valid = true) and (productattrs.ok != "true")</Condition>
+      </Step>
+      <Step>
+        <Name>PC-ProductAttrs</Name>
+        <Condition>(jwt.JWT-VerifyToken.valid = true) and (productattrs.cacheable = "true")</Condition>
       </Step>
       <!-- AUDIT: verified end-user identity + role from the Keycloak JWT. -->
       <Step>
@@ -146,6 +192,15 @@
           <Condition>!(jwt.JWT-VerifyToken.claim.scope ~~ ".*\bbiscuit_coffee_customer\b.*")</Condition>
           <Name>RF-Invalid-Scope</Name>
         </Step>
+        <!-- Direct REST callers get their own per-user order quota (5/min),
+             looser than the MCP product's 3/min so MCP's 429 is seen first. -->
+        <Step>
+          <Name>QU-PlaceOrderPerUser</Name>
+        </Step>
+        <Step>
+          <Condition>ratelimit.QU-PlaceOrderPerUser.failed = true</Condition>
+          <Name>RF-Order-Rate-Limited</Name>
+        </Step>
         <!-- Maximum order value, enforced at the gateway.
              The request body carries no prices, so we price it here from the
              same menu the backend uses (cached), then reject before the target
@@ -162,8 +217,14 @@
         <Step>
           <Name>JS-CheckOrderValue</Name>
         </Step>
+        <!-- No trustworthy menu (cache empty and callout failed / empty):
+             refuse rather than price with fallback prices. -->
         <Step>
-          <Condition>lookupcache.LC-MenuCache.cachehit = false</Condition>
+          <Condition>order.pricing_unavailable = "true"</Condition>
+          <Name>RF-Pricing-Unavailable</Name>
+        </Step>
+        <Step>
+          <Condition>menu.cacheable = "true"</Condition>
           <Name>PC-MenuCache</Name>
         </Step>
         <!-- AUDIT: generic custom-attribute enumeration for the audit record,
@@ -364,7 +425,13 @@
           <Name>RF-Invalid-Scope</Name>
         </Step>
       </Request>
-      <Response/>
+      <Response>
+        <!-- New price takes effect on the very next order. -->
+        <Step>
+          <Condition>response.status.code = 200</Condition>
+          <Name>IC-MenuCache</Name>
+        </Step>
+      </Response>
       <Condition>(proxy.pathsuffix MatchesPath "/staff/menu/*") and (request.verb = "PATCH")</Condition>
     </Flow>
     <Flow name="getSalesStats">

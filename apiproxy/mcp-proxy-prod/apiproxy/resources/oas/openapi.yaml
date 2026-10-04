@@ -149,10 +149,6 @@ paths:
                     application/json:
                         schema:
                             properties:
-                                email:
-                                    description: The user's email address (provide either email or name).
-                                    format: email
-                                    type: string
                                 items:
                                     items:
                                         properties:
@@ -165,9 +161,6 @@ paths:
                                             - quantity
                                         type: object
                                     type: array
-                                name:
-                                    description: The user's name (provide either email or name).
-                                    type: string
                             required:
                                 - items
                             type: object
@@ -310,6 +303,15 @@ paths:
                                         - COMPLETED
                                         - CANCELLED
                                     type: string
+                                expected_status:
+                                    description: Optional. The status the order is expected to have now (as last seen). If it has changed meanwhile, the update is refused instead of overwriting someone else's change.
+                                    enum:
+                                        - IN_PROGRESS
+                                        - READY
+                                        - COMPLETED
+                                        - CANCELLED
+                                        - PENDING_APPROVAL
+                                    type: string
                             required:
                                 - status
                             type: object
@@ -359,6 +361,15 @@ paths:
                                     type: string
                                 reason:
                                     description: Optional short reason, e.g. why the order was rejected.
+                                    type: string
+                                expected_status:
+                                    description: Optional. The status the order is expected to have now (normally PENDING_APPROVAL). If it has changed meanwhile, the decision is refused.
+                                    enum:
+                                        - IN_PROGRESS
+                                        - READY
+                                        - COMPLETED
+                                        - CANCELLED
+                                        - PENDING_APPROVAL
                                     type: string
                             required:
                                 - decision

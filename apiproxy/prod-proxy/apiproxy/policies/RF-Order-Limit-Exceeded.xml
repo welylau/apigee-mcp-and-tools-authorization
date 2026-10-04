@@ -8,8 +8,8 @@
   proxy surfaces to the agent as HTTP 200 + CallToolResult{isError:true} whose text
   is this JSON body verbatim, so `message` is what the customer ultimately hears.
 
-  Both figures are injected from JS-CheckOrderValue, so the limit is defined in
-  exactly one place (that policy's maxOrderAmount property). `$` is a literal here;
+  Both figures are injected from JS-CheckOrderValue, which takes the cap from the
+  caller's API Product attribute (maxOrderAmount). `$` is a literal here;
   only {order.*} is substituted.
 
   422 is used rather than 400 because the request is well-formed - it simply breaches

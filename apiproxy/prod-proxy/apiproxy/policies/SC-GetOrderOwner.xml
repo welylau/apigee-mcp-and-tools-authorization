@@ -7,11 +7,9 @@
 
   TWO DELIBERATE DIFFERENCES FROM SC-GetMenu - do not copy that file verbatim:
 
-  1. continueOnError is FALSE. SC-GetMenu fails open on purpose, so that an
-     unavailable menu never blocks a legitimate order. Here the opposite is
-     required: if we cannot establish who owns the order, the delete must not
-     proceed. A transport failure therefore aborts the flow and the target is
-     never called.
+  1. continueOnError is FALSE. If we cannot establish who owns the order, the
+     delete must not proceed. A transport failure therefore aborts the flow
+     and the target is never called.
 
   2. success.codes accepts every HTTP status. Without this, a 4xx/5xx from the
      backend counts as a callout failure and surfaces as a generic 500 - which
@@ -28,6 +26,14 @@
   <DisplayName>SC-GetOrderOwner</DisplayName>
   <Request clearPayload="true" variable="ownerRequest">
     <Set>
+      <!-- Same identity the target request carries (AM-SetBackendHeaders):
+           the backend re-verifies X-User-Token and rejects the lookup
+           without it. -->
+      <Headers>
+        <Header name="X-User-Token">{caller.raw_token}</Header>
+        <Header name="X-User-Email">{jwt.JWT-VerifyToken.claim.email}</Header>
+        <Header name="X-User-Scope">{jwt.JWT-VerifyToken.claim.scope}</Header>
+      </Headers>
       <Verb>GET</Verb>
       <Path>/orders/{order.id}</Path>
     </Set>

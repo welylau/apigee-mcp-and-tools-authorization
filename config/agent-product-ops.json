@@ -7,6 +7,14 @@
         {
             "name": "enforceOrderOwnership",
             "value": "true"
+        },
+        {
+            "name": "maxOrderAmount",
+            "value": "100"
+        },
+        {
+            "name": "approvalThreshold",
+            "value": "50"
         }
     ],
     "payloadOperationGroup": {
@@ -68,17 +76,7 @@
                     "limit": "3",
                     "interval": "1",
                     "timeUnit": "minute"
-                },
-                "attributes": [
-                    {
-                        "name": "maxOrderAmount",
-                        "value": "100"
-                    },
-                    {
-                        "name": "approvalThreshold",
-                        "value": "50"
-                    }
-                ]
+                }
             },
             {
                 "apiSource": "mcp-proxy-prod",

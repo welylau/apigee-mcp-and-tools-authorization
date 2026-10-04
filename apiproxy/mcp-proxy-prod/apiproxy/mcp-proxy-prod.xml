@@ -16,8 +16,6 @@
     <Policy>QU-ProductQuota</Policy>
     <Policy>QU-ProductQuota-Header</Policy>
     <Policy>RF-Quota-Exceeded</Policy>
-    <Policy>AM-MaxOrderAmount</Policy>
-    <Policy>AM-OwnershipFlag</Policy>
     <!-- Consumer / end-user audit logging -->
     <Policy>EV-McpToolCall</Policy>
     <Policy>AM-AuditConsumerContext</Policy>

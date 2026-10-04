@@ -1,10 +1,13 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <!--
   Caches the menu price list after a cache miss so subsequent orders are priced
-  without a backend call.
+  without a backend call. Only runs when checkOrderValue.js set
+  menu.cacheable=true, i.e. SC-GetMenu returned 200 with a non-empty priced
+  menu, so an error body is never cached.
 
   5 minutes is a deliberate compromise: long enough that the callout is rare on a
-  busy shop, short enough that a genuine price change takes effect quickly.
+  busy shop. A manager's price change takes effect immediately anyway, because
+  IC-MenuCache drops the entry on a successful updateMenuItem.
 -->
 <PopulateCache continueOnError="true" enabled="true" name="PC-MenuCache">
   <DisplayName>PC-MenuCache</DisplayName>

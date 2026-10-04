@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!--
+  The token is valid but its client (azp) is not mapped to an API Product for
+  this environment (azp-products property set). Fail closed.
+-->
+<RaiseFault continueOnError="false" enabled="true" name="RF-Client-Not-Allowed">
+  <DisplayName>RF-Client-Not-Allowed</DisplayName>
+  <FaultResponse>
+    <Set>
+      <Headers>
+        <Header name="Content-Type">application/json</Header>
+      </Headers>
+      <Payload contentType="application/json">{
+  "error": "client_not_allowed",
+  "message": "This application is not allowed to use the Biscuit Coffee API."
+}</Payload>
+      <StatusCode>403</StatusCode>
+      <ReasonPhrase>Forbidden</ReasonPhrase>
+    </Set>
+  </FaultResponse>
+  <IgnoreUnresolvedVariables>true</IgnoreUnresolvedVariables>
+</RaiseFault>

@@ -1,19 +1,24 @@
 #!/bin/bash
 
-# Exit on error
-set -e
+# Exit on error, on unset variables and on failures inside pipelines.
+# Variables that may legitimately be empty are read as ${VAR:-}.
+set -euo pipefail
 
-# Sourced environment variables
+# Sourced environment variables (.env may reference unset vars, so relax -u
+# only while sourcing it)
 if [ -f .env ]; then
   echo "Sourcing .env..."
+  set +u
   source .env
+  set -u
 fi
 
-PROJECT="${GOOGLE_CLOUD_PROJECT:-$PROJECT_ID}"
+PROJECT="${GOOGLE_CLOUD_PROJECT:-${PROJECT_ID:-}}"
 if [ -z "$PROJECT" ]; then
   echo "ERROR: GOOGLE_CLOUD_PROJECT or PROJECT_ID must be set"
   exit 1
 fi
+APIGEE_PROD_HOSTNAME="${APIGEE_PROD_HOSTNAME:-}"
 
 echo "Setting gcloud project to $PROJECT..."
 gcloud config set project "$PROJECT"
@@ -64,17 +69,13 @@ if [[ "$(uname)" == "Darwin" ]]; then
 fi
 
 echo "================================================="
-echo "Replacing Placeholders in Agents & Proxies"
+echo "Replacing Placeholders in Proxies"
 echo "================================================="
 
-# 1. Replace hostnames and local agent python files
-if [ -f "./biscuit-coffee/python/agents/coffee_agent_prod/tools.py" ]; then
-  echo "Replacing prod hostname in coffee_agent_prod/tools.py..."
-  sed "${sedi_args[@]}" "s|@APIGEE_PROD_HOSTNAME@|$APIGEE_PROD_HOSTNAME|g" ./biscuit-coffee/python/agents/coffee_agent_prod/tools.py
-fi
-
-# 2. Create a temporary staging directory to process proxy bundle files
+# 1. Create a temporary staging directory to process proxy bundle files.
+#    Placeholders are only ever replaced in this copy, never in tracked files.
 TMP_DIR=$(mktemp -d)
+trap 'rm -rf "${TMP_DIR:-}"' EXIT
 echo "Staging proxy bundles in temporary directory: $TMP_DIR"
 
 mkdir -p "$TMP_DIR/prod-proxy"
@@ -82,6 +83,12 @@ cp -r ./apiproxy/prod-proxy/apiproxy "$TMP_DIR/prod-proxy/"
 
 mkdir -p "$TMP_DIR/mcp-proxy-prod"
 cp -r ./apiproxy/mcp-proxy-prod/apiproxy "$TMP_DIR/mcp-proxy-prod/"
+
+# Never replace a hostname placeholder with an empty string.
+if [ -z "$APIGEE_PROD_HOSTNAME" ] && grep -rq '@APIGEE_PROD_HOSTNAME@' "$TMP_DIR"; then
+  echo "ERROR: APIGEE_PROD_HOSTNAME must be set (proxy files contain @APIGEE_PROD_HOSTNAME@)"
+  exit 1
+fi
 
 # Replace placeholders in temp copies
 echo "Performing replacements on proxy files..."
@@ -252,9 +259,10 @@ if [ "$DEPLOY_PRODUCTS" = true ]; then
     "https://apigee.googleapis.com/v1/organizations/$PROJECT/developers/agent-developer@biscuit-coffee.com/apps/biscuit-coffee-agent-app/keys/biscuit-coffee-agent")
   if [ "$key_status" -ne 200 ]; then
     # Only the consumer KEY (= Keycloak client id, the JWT azp) is verified by
-    # mcp-proxy-prod; the consumer secret is never checked. It is read from
-    # KEYCLOAK_CLIENT_SECRET (repo-root .env) when set, else generated.
-    AGENT_KEY_SECRET="${KEYCLOAK_CLIENT_SECRET:-$(openssl rand -hex 24)}"
+    # mcp-proxy-prod; the consumer secret is never checked. It is always a
+    # fresh random value: the Keycloak client secret must never be copied into
+    # Apigee (it would then be readable by anyone with Apigee app access).
+    AGENT_KEY_SECRET="$(openssl rand -hex 24)"
     apigeecli apps keys create --org "$PROJECT" --token "$TOKEN" \
       --name "biscuit-coffee-agent-app" \
       --key "biscuit-coffee-agent" \

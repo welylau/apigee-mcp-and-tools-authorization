@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!--
+  Per-user spike protection for every authenticated call (30 per minute per
+  verified user, caller.id = JWT sub). UseEffectiveCount allows short bursts
+  (an agent turn often makes several calls at once) instead of smoothing to
+  one call every 2 seconds. continueOnError so RF-Too-Many-Requests can return
+  a friendly body.
+-->
+<SpikeArrest continueOnError="true" enabled="true" name="SA-PerUser">
+  <DisplayName>SA-PerUser</DisplayName>
+  <Identifier ref="caller.id"/>
+  <Rate>30pm</Rate>
+  <UseEffectiveCount>true</UseEffectiveCount>
+</SpikeArrest>

@@ -52,18 +52,10 @@
         <Name>QU-ProductQuota-Header</Name>
         <Condition>request.header.Authorization == null</Condition>
       </Step>
-      <!-- Forward the API Product's per-operation maxOrderAmount attribute to
-           the backing API proxy. Must run AFTER VerifyAPIKey, which is what
-           resolves the product operation and its attributes. -->
-      <Step>
-        <Name>AM-MaxOrderAmount</Name>
-      </Step>
-      <!-- Forward the product-level enforceOrderOwnership toggle the same way.
-           Product level rather than per-operation because it governs three
-           operations at once (getOrder, cancelOrder, listOrders). -->
-      <Step>
-        <Name>AM-OwnershipFlag</Name>
-      </Step>
+      <!-- The order cap, approval threshold and ownership toggle are NOT
+           forwarded from here any more. Biscuit-Coffee-Shop resolves the same
+           API Product from the verified JWT azp and reads its attributes
+           itself (AccessEntity), and strips any such inbound header. -->
       <!-- AUDIT: correlation id (+ product hint) for joining with the
            Biscuit-Coffee-Shop audit records. -->
       <Step>
