@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!-- Publishes product.max_order_amount / approval_threshold / enforce_ownership. See productAttrs.js. -->
+<Javascript continueOnError="false" enabled="true" timeLimit="200" name="JS-ProductAttrs">
+  <DisplayName>JS-ProductAttrs</DisplayName>
+  <ResourceURL>jsc://productAttrs.js</ResourceURL>
+</Javascript>

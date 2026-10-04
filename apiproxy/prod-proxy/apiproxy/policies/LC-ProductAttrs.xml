@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!-- Cached attributes of the governing API Product (written by PC-ProductAttrs). -->
+<LookupCache continueOnError="true" enabled="true" name="LC-ProductAttrs">
+  <DisplayName>LC-ProductAttrs</DisplayName>
+  <CacheKey>
+    <KeyFragment>product-attrs</KeyFragment>
+    <KeyFragment ref="product.name"/>
+  </CacheKey>
+  <Scope>Application</Scope>
+  <AssignTo>productattrs.json</AssignTo>
+</LookupCache>

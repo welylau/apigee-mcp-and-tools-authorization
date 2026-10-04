@@ -17,13 +17,18 @@ const EVENT_META = {
   quota_exceeded: { label: 'Quota exceeded', color: 'var(--apigee-orange)', short: '429 quota' },
   order_limit_exceeded: { label: 'Large order blocked', color: 'var(--danger)', short: '422 > $100' },
   jwt_access: { label: 'JWT access', color: 'var(--google-blue)', short: 'JWT' },
+  approval_required: { label: 'Pending staff approval', color: 'var(--warning)', short: 'approval' },
+  approval_trigger_failed: { label: 'Approval request failed (legacy)', color: 'var(--google-yellow)', short: 'approval failed' },
 };
 const ROLE_COLORS = {
   customer: 'var(--role-customer)',
   manager: 'var(--role-manager)',
+  staff: 'var(--google-green, #34a853)',
   anonymous: 'var(--text-dim)',
   unknown: 'var(--border-accent)',
 };
+const ERROR_COLOR = 'var(--danger)';
+const BADGE_POLL_MS = 60000;
 
 // ---------------------------------------------------------------- helpers
 function el(tag, opts = {}, children = []) {
@@ -164,12 +169,23 @@ export class SettingsPanel {
     this.rangeChips = document.getElementById('logsRangeChips');
     this.eventFilter = document.getElementById('logsEventFilter');
     this.envFilter = document.getElementById('logsEnvFilter');
+    this.adminTab = document.getElementById('staffAdminTab');
+    this.badges = ['settingsErrBadge', 'staffAdminErrBadge'].map((id) => document.getElementById(id)).filter(Boolean);
     if (!this.openBtn || !this.drawer) return;
     this.bind();
+    this.startErrorBadge();
   }
 
   bind() {
     this.openBtn.addEventListener('click', () => this.open());
+    if (this.adminTab) {
+      this.adminTab.addEventListener('click', async () => {
+        const toOverview = this.state.tab === 'hosting';
+        if (toOverview) this.state.tab = 'overview'; // open() then loads the logs, not hosting
+        await this.open();
+        if (toOverview) this.switchTab('overview');
+      });
+    }
     this.closeBtn.addEventListener('click', () => this.close());
     this.maxBtn = document.getElementById('settingsMaximizeBtn');
     if (this.maxBtn) {
@@ -261,7 +277,7 @@ export class SettingsPanel {
     if (this.lastFocus && this.lastFocus.focus) this.lastFocus.focus();
   }
 
-  switchTab(tab) {
+  switchTab(tab, load = true) {
     this.state.tab = tab;
     this.drawer.querySelectorAll('.settings-tab').forEach((b) => {
       const on = b.dataset.tab === tab;
@@ -273,8 +289,58 @@ export class SettingsPanel {
     this.logsShell.classList.toggle('active', isLogs);
     this.overviewPane.classList.toggle('active', tab === 'overview');
     this.entriesPane.classList.toggle('active', tab === 'entries');
+    if (!load) return;
     if (tab === 'hosting' && !this.hostingLoaded) this.loadHosting();
     if (isLogs && !this.logsLoaded) this.loadLogs();
+  }
+
+  /** Jump to the Audit Entries tab filtered to HTTP 4xx/5xx responses. */
+  showErrors() {
+    this.state.event = 'errors';
+    this.state.page = 1;
+    this.expanded.clear();
+    if (this.eventFilter) this.eventFilter.value = 'errors';
+    this.switchTab('entries', false);
+    this.loadLogs();
+  }
+
+  // ---------------- error badge (header button + console tab)
+  isManagerView() {
+    const b = document.body;
+    return b.dataset.uiVariant === 'staff' && b.dataset.staffRole === 'manager';
+  }
+
+  setBadge(count) {
+    for (const badge of this.badges) {
+      badge.hidden = !count;
+      badge.textContent = count > 99 ? '99+' : String(count || '');
+      badge.title = count ? `${count} gateway error(s) in the last hour` : '';
+    }
+    const label = count ? ` (${count} gateway error(s) in the last hour)` : '';
+    this.openBtn.setAttribute('aria-label', `Admin panel${label}`);
+  }
+
+  async refreshBadge() {
+    if (!this.badges.length || document.hidden || !this.isManagerView()) {
+      if (!this.isManagerView()) this.setBadge(0);
+      return;
+    }
+    try {
+      const { status, body } = await this.api('/api/settings/logs?range=1h&event=errors&pageSize=10');
+      this.setBadge(status === 200 ? ((body.page || {}).total || 0) : 0);
+    } catch {
+      /* keep the last value; the next poll retries */
+    }
+  }
+
+  startErrorBadge() {
+    if (!this.badges.length) return;
+    const tick = () => this.refreshBadge();
+    // First check once the role is known (app.js sets data-staff-role after sign-in).
+    new MutationObserver(tick).observe(document.body, { attributes: true, attributeFilter: ['data-staff-role'] });
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) tick(); });
+    setInterval(tick, BADGE_POLL_MS);
+    tick();
   }
 
   setEntriesCount(n) {
@@ -301,8 +367,8 @@ export class SettingsPanel {
 
   renderGate(container, status, body) {
     const msgs = {
-      401: ['Sign in required', 'Log in with Keycloak (customer or store manager) to view this panel.'],
-      403: ['Store manager only', body?.message || 'Audit logs are restricted to the store manager role. Switch to the Store Manager persona and log in.'],
+      401: ['Sign in required', 'Sign in to the staff console as a store manager to view this panel.'],
+      403: ['Store manager only', body?.message || 'The admin panel is restricted to the store manager role.'],
       429: ['Slow down', 'Too many requests, try again in a minute.'],
       502: ['Google Cloud API error', body?.message || 'Could not reach Google Cloud APIs.'],
       503: ['Identity provider unavailable', 'Keycloak could not be reached to validate your session.'],
@@ -351,29 +417,32 @@ export class SettingsPanel {
       nodes.push(el('div', { className: 's-alert' }, [`Some sections could not be loaded: ${d.errors.join(' • ')}`]));
     }
 
-    // Runtime + IdP
+    // Runtime + IdP. Infrastructure details (bind address, revision, Python,
+    // ADK URL, issuer) are only returned to store managers.
     const realmMatch = /\/realms\/([^/]+)/.exec(rt.keycloakBase || '');
+    const has = (v) => v !== undefined && v !== null && v !== '';
+    const runtimeRows = [
+      ['Web UI URL', safeLink(rt.localUrl)],
+      has(rt.bindHost) ? ['Bound to', `${rt.bindHost}:${rt.port}`] : null,
+      ['Hosting', rt.cloudRunService
+        ? `Cloud Run (${rt.cloudRunService}${rt.cloudRunRevision ? ' • ' + rt.cloudRunRevision : ''})`
+        : (rt.container ? 'Container' : 'Local (python server.py)')],
+      has(rt.pythonVersion) ? ['Python', rt.pythonVersion] : null,
+      ['ADK backend', el('span', {}, [
+        el('span', { className: `s-dot ${rt.adkLive ? 'ok' : 'bad'}` }), ' ',
+        el('span', { className: 's-mono', text: rt.adkBackend || (rt.adkLive ? 'online' : 'offline') }),
+      ])],
+      ['Model', rt.model],
+    ].filter(Boolean);
+    const idpRows = [
+      has(rt.keycloakBase) ? ['Issuer', safeLink(rt.keycloakBase)] : null,
+      realmMatch ? ['Realm', realmMatch[1]] : null,
+      ['UI client ID', el('span', { className: 's-mono', text: rt.keycloakClientId })],
+      ['Secret', 'Held server-side only (BFF)'],
+    ].filter(Boolean);
     nodes.push(el('div', { className: 's-grid-2 s-section-gap' }, [
-      card('Web UI runtime', kv([
-        ['Web UI URL', safeLink(rt.localUrl)],
-        ['Bound to', `${rt.bindHost}:${rt.port}`],
-        ['Hosting', rt.cloudRunService
-          ? `Cloud Run (${rt.cloudRunService}${rt.cloudRunRevision ? ' • ' + rt.cloudRunRevision : ''})`
-          : (rt.container ? 'Container' : 'Local (python server.py)')],
-        ['Python', rt.pythonVersion],
-        ['ADK backend', el('span', {}, [
-          el('span', { className: `s-dot ${rt.adkLive ? 'ok' : 'bad'}` }), ' ',
-          el('span', { className: 's-mono', text: rt.adkBackend }),
-        ])],
-        ['ADK Dev UI', safeLink(rt.adkDevUi)],
-        ['Model', rt.model],
-      ])),
-      card('Identity provider (Keycloak)', kv([
-        ['Issuer', safeLink(rt.keycloakBase)],
-        ['Realm', realmMatch ? realmMatch[1] : '—'],
-        ['UI client ID', el('span', { className: 's-mono', text: rt.keycloakClientId })],
-        ['Secret', 'Held server-side only (BFF)'],
-      ])),
+      card('Web UI runtime', kv(runtimeRows)),
+      card('Identity provider (Keycloak)', kv(idpRows)),
     ]));
 
     // Apigee gateway / env groups
@@ -527,7 +596,11 @@ export class SettingsPanel {
     this.setEntriesCount((d.page || {}).total ?? 0);
 
     if (!k.total) {
-      const empty = () => el('div', { className: 's-card s-empty' }, [
+      const errorsOnly = (d.filters || {}).event === 'errors';
+      const empty = () => el('div', { className: 's-card s-empty' }, errorsOnly ? [
+        el('strong', { text: '✅ No gateway errors in this window' }),
+        'No 4xx / 5xx responses were recorded. Try a wider range to look further back.',
+      ] : [
         el('strong', { text: 'No audit events in this window' }),
         'Try a wider range, or log in and chat (guest calls are not audited). Quota and large-order violations are logged too.',
       ]);
@@ -536,23 +609,40 @@ export class SettingsPanel {
       return;
     }
 
-    const kpi = (label, value, hint, accent) => el('div', { className: 'kpi-card', style: { '--kpi-accent': accent } }, [
-      el('div', { className: 'kpi-label', text: label }),
-      el('div', { className: 'kpi-value', text: value }),
-      hint ? el('div', { className: 'kpi-hint', text: hint }) : null,
-    ]);
+    const kpi = (label, value, hint, accent, onClick) => {
+      const node = el('div', { className: `kpi-card${onClick ? ' kpi-clickable' : ''}`, style: { '--kpi-accent': accent } }, [
+        el('div', { className: 'kpi-label', text: label }),
+        el('div', { className: 'kpi-value', text: value }),
+        hint ? el('div', { className: 'kpi-hint', text: hint }) : null,
+      ]);
+      if (onClick) {
+        node.setAttribute('role', 'button');
+        node.setAttribute('tabindex', '0');
+        node.title = 'Show these entries';
+        node.addEventListener('click', onClick);
+        node.addEventListener('keydown', (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); onClick(); } });
+      }
+      return node;
+    };
+    const errHint = k.errors
+      ? `${k.deniedRate}% • ${k.authErrors} auth • ${k.rateLimited} 429 • ${k.serverErrors} 5xx`
+      : 'no 4xx / 5xx';
 
     this.overviewPane.replaceChildren(
       el('div', { className: 'kpi-grid' }, [
         kpi('Events', k.total.toLocaleString(), `range ${d.range}`, 'var(--google-blue)'),
+        kpi('Errors', (k.errors || 0).toLocaleString(), errHint, ERROR_COLOR, k.errors ? () => this.showErrors() : null),
         kpi('Violations', k.violations, 'quota + large order', 'var(--danger)'),
         kpi('Quota 429', k.quotaExceeded, '> 3 placeOrder / min', 'var(--apigee-orange)'),
         kpi('Large order 422', k.largeOrders, k.maxRejectedOrder ? `max $${k.maxRejectedOrder.toFixed(2)}` : 'orders > $100', 'var(--danger)'),
-        kpi('Denied rate', `${k.deniedRate}%`, 'status ≥ 400', 'var(--warning)'),
         kpi('End users', k.uniqueUsers, `${k.uniqueApps} client app(s)`, 'var(--role-manager)'),
       ]),
+      card('Recent errors (HTTP 4xx / 5xx)', this.recentErrors(a.recentErrors || [], k.lastErrorAt), k.errors || 0),
       card('Events over time', this.timelineChart(a.timeline)),
       el('div', { className: 's-grid-2 s-grid-3 s-section-gap' }, [
+        card('Errors by status', this.barList((a.errorsByStatus || []).map((x) => ({ ...x, color: this.statusColor(x.label) })),
+          ERROR_COLOR, 'No errors in range')),
+        card('Errors by tool / path', this.barList(a.errorPaths, ERROR_COLOR, 'No errors in range')),
         card('Event mix', this.donut(a.byEvent || [], k.total)),
         card('End-user roles (from IdP JWT)', this.roleSplit(a.byRole || [])),
         card('Top violators', this.barList(a.topViolators, 'var(--danger)', 'No violations in range')),
@@ -569,6 +659,32 @@ export class SettingsPanel {
     );
   }
 
+  /** Newest error responses, one line each; click opens the filtered entries tab. */
+  recentErrors(items, lastAt) {
+    if (!items.length) {
+      return el('div', { className: 's-muted', text: '✅ No 4xx / 5xx responses in this range.', style: { 'font-size': '12px' } });
+    }
+    const list = el('div', { className: 'err-list' }, items.map((e) => {
+      const row = el('div', { className: 'err-row', attrs: { role: 'button', tabindex: '0' }, title: e.ts }, [
+        el('span', { className: `status-pill ${statusClass(e.status)}`, text: e.status }),
+        el('span', { className: 'err-what s-mono', text: e.tool || `${e.verb} ${e.path}`.trim() || '—' }),
+        el('span', { className: 'err-who', text: e.user || e.clientId || e.role || '—' }),
+        el('span', { className: `ev-badge ${e.event}`, text: (EVENT_META[e.event] || {}).short || e.event }),
+        el('span', { className: 'err-when s-sub-meta', text: relTime(e.ts) }),
+      ]);
+      const go = () => this.showErrors();
+      row.addEventListener('click', go);
+      row.addEventListener('keydown', (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); go(); } });
+      return row;
+    }));
+    const foot = el('div', { className: 's-sub-meta', style: { 'margin-top': '8px' } }, [
+      lastAt ? `Last error ${relTime(lastAt)} • ` : '',
+      el('button', { className: 'pager-btn', text: 'View all errors →', attrs: { type: 'button' } }),
+    ]);
+    foot.querySelector('button').addEventListener('click', () => this.showErrors());
+    return [list, foot];
+  }
+
   statusColor(code) {
     const c = statusClass(code);
     return c === 'ok' ? 'var(--success)' : c === 'warn' ? 'var(--warning)' : c === 'err' ? 'var(--danger)' : 'var(--text-dim)';
@@ -580,7 +696,7 @@ export class SettingsPanel {
     const W = 1200, H = 200, padL = 30, padB = 22, padT = 8, padR = 6;
     const innerW = W - padL - padR, innerH = H - padT - padB;
     const events = Object.keys(EVENT_META);
-    const max = Math.max(1, ...buckets.map((b) => events.reduce((s, e) => s + (b[e] || 0), 0)));
+    const max = Math.max(1, ...buckets.map((b) => Math.max(b.errors || 0, events.reduce((s, e) => s + (b[e] || 0), 0))));
     const bw = innerW / Math.max(1, buckets.length);
     const root = svg('svg', { viewBox: `0 0 ${W} ${H}`, class: 'chart-svg', role: 'img', 'aria-label': 'Audit events over time' });
 
@@ -600,7 +716,7 @@ export class SettingsPanel {
       const w = Math.max(1, bw * 0.76);
       const total = events.reduce((s, e) => s + (b[e] || 0), 0);
       const g = svg('g', {}, [svgTitle(`${fmtTime(b.start, false)} — ${total} event(s)\n`
-        + events.map((e) => `${EVENT_META[e].label}: ${b[e] || 0}`).join('\n'))]);
+        + events.map((e) => `${EVENT_META[e].label}: ${b[e] || 0}`).join('\n') + `\nErrors (4xx/5xx): ${b.errors || 0}`)]);
       // invisible hit area so the tooltip works on empty buckets too
       g.appendChild(svg('rect', { x: padL + i * bw, y: padT, width: bw, height: innerH, fill: 'transparent' }));
       for (const e of events) {
@@ -623,10 +739,26 @@ export class SettingsPanel {
       }
     });
 
-    const legend = el('div', { className: 'legend' }, events.map((e) => el('span', { className: 'legend-item' }, [
-      el('span', { className: 'legend-swatch', style: { background: EVENT_META[e].color } }),
-      EVENT_META[e].label,
-    ])));
+    // Errors (HTTP 4xx/5xx) as a line over the stacked event bars.
+    if (buckets.some((b) => b.errors)) {
+      const pts = buckets.map((b, i) => `${padL + i * bw + bw / 2},${padT + innerH - (innerH * (b.errors || 0)) / max}`).join(' ');
+      root.appendChild(svg('polyline', { points: pts, fill: 'none', 'stroke-width': 2, 'stroke-linejoin': 'round', style: `stroke:${ERROR_COLOR}`, 'pointer-events': 'none' }));
+      buckets.forEach((b, i) => {
+        if (!b.errors) return;
+        root.appendChild(svg('circle', { cx: padL + i * bw + bw / 2, cy: padT + innerH - (innerH * b.errors) / max, r: 3, style: `fill:${ERROR_COLOR}`, 'pointer-events': 'none' }));
+      });
+    }
+
+    const legend = el('div', { className: 'legend' }, [
+      ...events.map((e) => el('span', { className: 'legend-item' }, [
+        el('span', { className: 'legend-swatch', style: { background: EVENT_META[e].color } }),
+        EVENT_META[e].label,
+      ])),
+      el('span', { className: 'legend-item' }, [
+        el('span', { className: 'legend-swatch legend-line', style: { background: ERROR_COLOR } }),
+        'Errors (4xx / 5xx)',
+      ]),
+    ]);
     return [root, legend];
   }
 
@@ -700,7 +832,8 @@ export class SettingsPanel {
     const body = el('tbody');
     for (const e of entries) {
       const key = e.id || `${e.ts}-${e.correlationId}`;
-      const row = el('tr', { className: `s-row${this.expanded.has(key) ? ' expanded' : ''}`, attrs: { tabindex: '0' } }, [
+      const isErr = parseInt(e.status, 10) >= 400;
+      const row = el('tr', { className: `s-row${isErr ? ' s-row-error' : ''}${this.expanded.has(key) ? ' expanded' : ''}`, attrs: { tabindex: '0' } }, [
         el('td', { title: e.ts }, [el('div', { text: fmtTime(e.ts) }), el('div', { className: 's-sub-meta', text: relTime(e.ts) })]),
         el('td', {}, el('span', { className: `ev-badge ${e.event}`, text: (EVENT_META[e.event] || {}).short || e.event })),
         el('td', {}, [

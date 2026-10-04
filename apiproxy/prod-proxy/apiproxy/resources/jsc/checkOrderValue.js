@@ -13,87 +13,109 @@
  * agrees with the backend's.
  *
  * WHERE THE LIMIT COMES FROM
- * The cap is declared as a custom attribute (`maxOrderAmount`) on the
- * `tools/call/placeOrder` operation of the biscuit-coffee-agent API Product,
- * alongside that operation's quota. Product attributes only materialise as
- * flow variables in the proxy that ran VerifyAPIKey -- that is mcp-proxy-prod,
- * not this proxy -- so mcp-proxy-prod reads the attribute and forwards it as
- * the X-Max-Order-Amount header (see its AM-MaxOrderAmount policy).
+ * The cap (`maxOrderAmount`) and approval threshold (`approvalThreshold`) are
+ * custom attributes on the API Product that the caller's Keycloak client is
+ * bound to. This proxy resolves that product itself from the VERIFIED JWT
+ * `azp` claim (JS-ResolveProduct), reads it with AccessEntity and caches the
+ * attributes for 60s (LC/AE/JS/PC-ProductAttrs). The result arrives here as
+ * the flow variables product.max_order_amount / product.approval_threshold.
  *
- * defaultMaxOrderAmount is only a safety net for callers that arrive without
- * that header, i.e. direct REST clients that never passed through the MCP
- * server. Changing the enforced limit for the agent means editing the API
- * Product, not this file.
+ * Nothing is read from inbound headers: AM-StripInboundPolicyHeaders removes
+ * the legacy X-Max-Order-Amount / X-Approval-Threshold / X-Policy-Signature
+ * headers at the top of PreFlow, so a caller cannot lift its own cap.
+ *
+ * defaultMaxOrderAmount / defaultApprovalThreshold are only used if the
+ * product does not carry the attribute. Changing the enforced limit means
+ * editing the API Product, not this file.
+ *
+ * PRICING MUST BE REAL
+ * If neither the cache nor the SC-GetMenu callout yields a usable menu, the
+ * order is NOT priced with fallback prices (that would let a $500 order
+ * through as $3.50 x n). order.pricing_unavailable=true makes the flow raise
+ * RF-Pricing-Unavailable (503).
  *
  * Sets:
- *   menu.json            - price list (so PC-MenuCache can store it)
+ *   menu.json            - price list (only when it came from a good callout)
+ *   menu.cacheable       - "true" when PC-MenuCache should store menu.json
+ *   order.pricing_unavailable - "true" when no trustworthy menu was available
  *   order.total          - computed total, 2dp
  *   order.total_display  - same, formatted for the customer message
  *   order.max_display    - the effective cap, formatted
  *   order.item_count     - total number of drinks
- *   order.exceeds_limit  - "true" / "false" (string, for the flow condition)
+ *   order.exceeds_limit  - "true" when total >= cap (string, for the flow condition)
+ *   order.requires_approval - "true" when approvalThreshold <= total < cap
+ *   order.approval_threshold_display - the effective threshold, formatted
  *   order.limit_source   - product-attribute | proxy-default (for debugging)
- *   order.pricing_source - cache | callout | fallback (for debugging)
+ *   order.threshold_source - product-attribute | proxy-default (for debugging)
+ *   order.pricing_source - cache | callout | unavailable (for debugging)
  */
 
 // ----------------------------------------------------------------- the limit
-// The header is only trusted when it carries the signature that
-// mcp-proxy-prod attaches. This proxy is directly reachable with an ordinary
-// customer token, so an unsigned inbound header is attacker-controlled: without
-// this check a customer could send `X-Max-Order-Amount: 999999` and lift their
-// own spending cap. An unsigned or spoofed header now simply falls through to
-// defaultMaxOrderAmount below, which is the safe direction.
-//
-// Must stay in step with POLICY_SIGNATURE in checkOrderOwnership.js and with
-// AM-OwnershipFlag in mcp-proxy-prod. In production this belongs in a KVM.
-var POLICY_SIGNATURE = 'bcs-gw-policy-9d41f7a2c6be4815';
-var signature = String(context.getVariable('request.header.X-Policy-Signature') || '');
-var trusted = (signature === POLICY_SIGNATURE);
-
-var maxAmount = trusted
-    ? parseFloat(context.getVariable('request.header.X-Max-Order-Amount'))
-    : NaN;
+var maxAmount = parseFloat(context.getVariable('product.max_order_amount'));
 var limitSource = 'product-attribute';
 
 if (isNaN(maxAmount) || maxAmount <= 0) {
-    // No usable trusted header: a direct REST caller, an unsigned/spoofed
-    // header, or the attribute is not set on the product. Fall back rather
-    // than letting an unpriced order past.
+    // Attribute missing on the product: fall back rather than letting an
+    // unpriced order past.
     maxAmount = parseFloat(properties.defaultMaxOrderAmount || '100');
     limitSource = 'proxy-default';
 }
 
-
 var defaultPrice = parseFloat(properties.defaultItemPrice || '3.50');
 
 // ---------------------------------------------------------------- menu prices
-var menuJson = context.getVariable('menu.json');
-var source = 'cache';
-
-if (!menuJson) {
-    // Cache miss: use whatever SC-GetMenu returned.
-    menuJson = context.getVariable('menuResponse.content');
-    source = menuJson ? 'callout' : 'fallback';
-    if (menuJson) {
-        // Expose it so PC-MenuCache can persist it for later requests.
-        context.setVariable('menu.json', menuJson);
+// Returns the parsed menu array, or null unless it is a non-empty array with
+// at least one priced item.
+function parseMenu(text) {
+    if (!text) {
+        return null;
     }
-}
-
-var prices = {};
-if (menuJson) {
     try {
-        var menu = JSON.parse(menuJson);
-        if (menu && menu.length) {
-            for (var i = 0; i < menu.length; i++) {
-                if (menu[i] && menu[i].id !== undefined) {
-                    prices[menu[i].id] = parseFloat(menu[i].price);
-                }
+        var m = JSON.parse(text);
+        if (!m || typeof m.length !== 'number' || m.length === 0) {
+            return null;
+        }
+        for (var k = 0; k < m.length; k++) {
+            if (m[k] && m[k].id !== undefined && !isNaN(parseFloat(m[k].price))) {
+                return m;
             }
         }
     } catch (e) {
-        // Malformed menu: fall through to defaultPrice for every item.
-        source = 'fallback';
+        // fall through
+    }
+    return null;
+}
+
+var source = 'cache';
+var menu = parseMenu(context.getVariable('menu.json'));
+
+if (!menu) {
+    // Cache miss (or an unusable cached value): use SC-GetMenu, but only a
+    // 200 with a real menu. Anything else is "pricing unavailable".
+    var status = String(context.getVariable('menuResponse.status.code') || '');
+    var calloutText = context.getVariable('menuResponse.content');
+    menu = (status === '200') ? parseMenu(calloutText) : null;
+    if (menu) {
+        source = 'callout';
+        // Expose it so PC-MenuCache can persist it for later requests.
+        context.setVariable('menu.json', calloutText);
+        context.setVariable('menu.cacheable', 'true');
+    } else {
+        source = 'unavailable';
+    }
+}
+
+context.setVariable('order.pricing_unavailable', menu ? 'false' : 'true');
+
+var prices = {};
+var names = {};
+if (menu) {
+    for (var i = 0; i < menu.length; i++) {
+        if (menu[i] && menu[i].id !== undefined) {
+            prices[menu[i].id] = parseFloat(menu[i].price);
+            names[menu[i].id] = String(menu[i].name || menu[i].id) +
+                (menu[i].size ? ' (' + menu[i].size + ')' : '');
+        }
     }
 }
 
@@ -115,6 +137,7 @@ try {
 // ---------------------------------------------------------------- total
 var total = 0;
 var count = 0;
+var summary = [];
 
 for (var j = 0; j < items.length; j++) {
     var item = items[j] || {};
@@ -128,15 +151,39 @@ for (var j = 0; j < items.length; j++) {
     }
     total += price * qty;
     count += qty;
+    if (qty > 0) {
+        // Only menu names (or a fixed label for unknown ids) go into the
+        // summary, so customer-supplied text cannot shape anything that reads
+        // order.items_summary (trace / audit).
+        summary.push(qty + ' x ' + (names[item.item_id] || 'unlisted item'));
+    }
 }
 
 total = Math.round(total * 100) / 100;
 
 // Render a whole-dollar cap as "100" rather than "100.00" so the customer
 // message reads naturally, while still supporting values like 99.50.
-var maxDisplay = (maxAmount % 1 === 0)
-    ? maxAmount.toFixed(0)
-    : maxAmount.toFixed(2);
+function money(v) {
+    return (v % 1 === 0) ? v.toFixed(0) : v.toFixed(2);
+}
+var maxDisplay = money(maxAmount);
+
+// ------------------------------------------------------- approval threshold
+// Orders from approvalThreshold up to (not including) the cap need a person
+// to approve them (human in the loop). Same source as the cap: the product
+// attribute resolved by this proxy, never an inbound header. A threshold of
+// 0 or less, or one above the cap, turns approval off.
+var approvalThreshold = parseFloat(context.getVariable('product.approval_threshold'));
+var thresholdSource = 'product-attribute';
+if (isNaN(approvalThreshold)) {
+    approvalThreshold = parseFloat(properties.defaultApprovalThreshold || '50');
+    thresholdSource = 'proxy-default';
+}
+// The cap is exclusive: online orders must total LESS than maxOrderAmount, so
+// a total of exactly the cap (e.g. $100.00) is rejected with 422. Orders from
+// approvalThreshold up to (not including) the cap become PENDING_APPROVAL.
+var exceeds = total >= maxAmount;
+var requiresApproval = !exceeds && approvalThreshold > 0 && total >= approvalThreshold;
 
 context.setVariable('order.total', total);
 context.setVariable('order.total_display', total.toFixed(2));
@@ -144,4 +191,9 @@ context.setVariable('order.max_display', maxDisplay);
 context.setVariable('order.item_count', count);
 context.setVariable('order.pricing_source', source);
 context.setVariable('order.limit_source', limitSource);
-context.setVariable('order.exceeds_limit', total > maxAmount ? 'true' : 'false');
+context.setVariable('order.exceeds_limit', exceeds ? 'true' : 'false');
+context.setVariable('order.requires_approval', requiresApproval ? 'true' : 'false');
+context.setVariable('order.approval_threshold_display',
+    isNaN(approvalThreshold) ? '' : money(approvalThreshold));
+context.setVariable('order.threshold_source', thresholdSource);
+context.setVariable('order.items_summary', summary.join(', '));

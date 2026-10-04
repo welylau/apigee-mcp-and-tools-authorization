@@ -1,11 +1,25 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<AssignMessage continueOnError="true" enabled="true" name="AM-SetBackendHeaders">
+<!--
+  Identity headers for the Cloud Run backend, derived only from the VERIFIED
+  Keycloak JWT. continueOnError is false: if these cannot be set, the request
+  must not reach the backend with whatever identity headers the caller sent.
+
+  X-User-Token carries the user's own JWT (without "Bearer "), because the
+  target's Authorization header is replaced by Apigee's Google ID token. The
+  backend may re-verify it (defence in depth); it is ignored for now.
+-->
+<AssignMessage continueOnError="false" enabled="true" name="AM-SetBackendHeaders">
   <DisplayName>AM-SetBackendHeaders</DisplayName>
   <!-- AUDIT: gateway-internal correlation/hint headers must not leak to the backend. -->
   <Remove>
     <Headers>
       <Header name="X-Correlation-Id"/>
       <Header name="X-Audit-Product"/>
+      <!-- Human-in-the-loop: the order status hint is set only by the gateway
+           (AM-OrderPendingApproval, which runs after this step). Anything the
+           caller sent is dropped so nobody can choose their own order status. -->
+      <Header name="X-Order-Status"/>
+      <Header name="X-User-Token"/>
     </Headers>
   </Remove>
   <Set>
@@ -13,6 +27,7 @@
       <Header name="X-User-Email">{jwt.JWT-VerifyToken.claim.email}</Header>
       <Header name="X-User-Name">{jwt.JWT-VerifyToken.claim.name}</Header>
       <Header name="X-User-Scope">{jwt.JWT-VerifyToken.claim.scope}</Header>
+      <Header name="X-User-Token">{caller.raw_token}</Header>
     </Headers>
   </Set>
   <IgnoreUnresolvedVariables>true</IgnoreUnresolvedVariables>

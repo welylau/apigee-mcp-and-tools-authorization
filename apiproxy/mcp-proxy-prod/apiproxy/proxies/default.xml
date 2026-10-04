@@ -12,14 +12,20 @@
            Must run before the Quota steps, since FaultRules can only read
            variables that were already set when the fault fired. -->
       <Step>
-        <Name>EV-JsonRpcId</Name>
+        <Name>JS-JsonRpcId</Name>
       </Step>
+      <!-- Signed-in path: VERIFY the Keycloak access token. Its azp becomes the
+           API key and its sub the quota identifier, so a forged or unsigned
+           token cannot select a product or borrow someone else's quota. -->
       <Step>
-        <Name>AM-JsonRpcIdDefault</Name>
-      </Step>
-      <Step>
-        <Name>JWT-Decode</Name>
+        <Name>JWT-VerifyToken</Name>
         <Condition>request.header.Authorization != null</Condition>
+      </Step>
+      <!-- Guest path: no token, so only the public customer key (public tools
+           only) is accepted. A staff key without a staff JWT is refused. -->
+      <Step>
+        <Name>RF-Guest-Key-Not-Allowed</Name>
+        <Condition>(request.header.Authorization = null) and (request.verb != "OPTIONS") and (request.header.x-api-key != "biscuit-coffee-agent") and (request.header.x-api-key != "biscuit-coffee-agent-dev")</Condition>
       </Step>
       <Step>
         <Name>PP-ParseMCPTools</Name>
@@ -52,18 +58,10 @@
         <Name>QU-ProductQuota-Header</Name>
         <Condition>request.header.Authorization == null</Condition>
       </Step>
-      <!-- Forward the API Product's per-operation maxOrderAmount attribute to
-           the backing API proxy. Must run AFTER VerifyAPIKey, which is what
-           resolves the product operation and its attributes. -->
-      <Step>
-        <Name>AM-MaxOrderAmount</Name>
-      </Step>
-      <!-- Forward the product-level enforceOrderOwnership toggle the same way.
-           Product level rather than per-operation because it governs three
-           operations at once (getOrder, cancelOrder, listOrders). -->
-      <Step>
-        <Name>AM-OwnershipFlag</Name>
-      </Step>
+      <!-- The order cap, approval threshold and ownership toggle are NOT
+           forwarded from here any more. Biscuit-Coffee-Shop resolves the same
+           API Product from the verified JWT azp and reads its attributes
+           itself (AccessEntity), and strips any such inbound header. -->
       <!-- AUDIT: correlation id (+ product hint) for joining with the
            Biscuit-Coffee-Shop audit records. -->
       <Step>
@@ -83,6 +81,13 @@
     </Response>
   </PostClientFlow>
   <FaultRules>
+    <!-- Any JWT-VerifyToken failure: one generic JSON-RPC 401. -->
+    <FaultRule name="jwt-invalid">
+      <Step>
+        <Name>AM-Fault-McpUnauthorized</Name>
+      </Step>
+      <Condition>JWT.failed = true</Condition>
+    </FaultRule>
     <!-- Convert raw Apigee QuotaViolation faults into a JSON-RPC 2.0 error -->
     <FaultRule name="quota-exceeded">
       <!-- AUDIT: generic custom-attribute enumeration, only on this rejection

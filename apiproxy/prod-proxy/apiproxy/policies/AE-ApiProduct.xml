@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!--
+  Loads the API Product chosen by JS-ResolveProduct (cache miss only).
+  continueOnError: a failure is detected by JS-ProductAttrs, which then
+  fails closed (RF-Product-Unavailable, 503).
+-->
+<AccessEntity continueOnError="true" enabled="true" name="AE-ApiProduct">
+  <DisplayName>AE-ApiProduct</DisplayName>
+  <EntityType value="apiproduct"/>
+  <EntityIdentifier ref="product.name" type="apiproductname"/>
+  <OutputFormat>JSON</OutputFormat>
+</AccessEntity>

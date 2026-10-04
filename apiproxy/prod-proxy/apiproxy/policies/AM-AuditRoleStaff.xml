@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!-- AUDIT LOGGING - end-user role = staff (scope biscuit_coffee_staff).
+     Runs after AM-AuditRoleCustomer and before AM-AuditRoleManager, so a
+     manager (who also carries the staff scope) is still logged as manager. -->
+<AssignMessage continueOnError="true" enabled="true" name="AM-AuditRoleStaff">
+  <DisplayName>AM-AuditRoleStaff</DisplayName>
+  <AssignVariable>
+    <Name>audit.user.role</Name>
+    <Value>staff</Value>
+  </AssignVariable>
+  <IgnoreUnresolvedVariables>true</IgnoreUnresolvedVariables>
+  <AssignTo createNew="false" transport="http" type="request"/>
+</AssignMessage>

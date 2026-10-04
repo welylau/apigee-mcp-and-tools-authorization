@@ -9,12 +9,11 @@
   attack into a working customer-discovery tool. Every deny path therefore
   produces this identical status, body and wording.
 
-  X-DEBUG-REASON
-  order.ownership_reason distinguishes not_found / not_owner / lookup_failed /
-  invalid_order_id / no_caller_identity so the real cause can be shown in the
-  tool card or a trace during the demo, without the response BODY leaking it.
-  Note this header is a demo affordance: in a production deployment it would be
-  stripped at the edge, since anything the client can read is an oracle.
+  NO DEBUG HEADER
+  order.ownership_reason (not_found / not_owner / lookup_failed /
+  invalid_order_id / no_caller_identity) stays a flow variable: visible in a
+  Debug session, never in the response. A header the client can read would be
+  the very oracle this refusal closes.
 
   Shape matches RF-Invalid-Scope and RF-Order-Limit-Exceeded ({error, message})
   because that is what the managed MCP service wraps into a tool result: a 4xx
@@ -28,7 +27,6 @@
     <Set>
       <Headers>
         <Header name="Content-Type">application/json</Header>
-        <Header name="X-Debug-Reason">{order.ownership_reason}</Header>
       </Headers>
       <Payload contentType="application/json">{
   "error": "order_not_found",

@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!--
+  FIRST step of the ProxyEndpoint PreFlow. Drops every header that used to
+  carry policy or identity from mcp-proxy-prod, plus the user-token header the
+  gateway sets itself.
+
+  This proxy is directly reachable with an ordinary customer token, so any of
+  these headers arriving from outside is attacker-controlled. Nothing in this
+  bundle reads them any more: the order cap, approval threshold and
+  ownership toggle now come from the API Product looked up from the VERIFIED
+  JWT azp (JS-ResolveProduct / AE-ApiProduct / JS-ProductAttrs). They are
+  removed anyway, so neither a policy nor the backend ever sees a value the
+  caller chose.
+-->
+<AssignMessage continueOnError="false" enabled="true" name="AM-StripInboundPolicyHeaders">
+  <DisplayName>AM-StripInboundPolicyHeaders</DisplayName>
+  <Remove>
+    <Headers>
+      <Header name="X-Policy-Signature"/>
+      <Header name="X-Enforce-Order-Ownership"/>
+      <Header name="X-Max-Order-Amount"/>
+      <Header name="X-Approval-Threshold"/>
+      <Header name="X-User-Token"/>
+    </Headers>
+  </Remove>
+  <IgnoreUnresolvedVariables>true</IgnoreUnresolvedVariables>
+  <AssignTo createNew="false" transport="http" type="request"/>
+</AssignMessage>

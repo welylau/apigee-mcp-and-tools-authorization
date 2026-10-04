@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!-- SA-PerUser tripped. -->
+<RaiseFault continueOnError="false" enabled="true" name="RF-Too-Many-Requests">
+  <DisplayName>RF-Too-Many-Requests</DisplayName>
+  <FaultResponse>
+    <Set>
+      <Headers>
+        <Header name="Content-Type">application/json</Header>
+        <Header name="Retry-After">10</Header>
+      </Headers>
+      <Payload contentType="application/json">{
+  "error": "too_many_requests",
+  "message": "You're sending requests a little too quickly. Please wait a few seconds and try again."
+}</Payload>
+      <StatusCode>429</StatusCode>
+      <ReasonPhrase>Too Many Requests</ReasonPhrase>
+    </Set>
+  </FaultResponse>
+  <IgnoreUnresolvedVariables>true</IgnoreUnresolvedVariables>
+</RaiseFault>

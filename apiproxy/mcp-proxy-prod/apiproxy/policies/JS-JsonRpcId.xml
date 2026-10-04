@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!--
+  Captures the JSON-RPC 2.0 request id so any fault response can echo it.
+
+  RF-Quota-Exceeded, RF-Guest-Key-Not-Allowed and AM-Fault-McpUnauthorized
+  embed {jsonrpc.id} unquoted, so this policy stores it already JSON-encoded:
+  a numeric id stays 7, a string id becomes "abc" (quoted). mcp.types.JSONRPCError
+  requires `id` (str | int); echoing the wrong type, or omitting it, makes the
+  client drop the response and hang. Anything else (no body, batch, null id,
+  malformed JSON) falls back to 0.
+
+  mcpreq.id keeps the raw value for the audit log.
+-->
+<Javascript continueOnError="true" enabled="true" timeLimit="200" name="JS-JsonRpcId">
+  <DisplayName>JS-JsonRpcId</DisplayName>
+  <ResourceURL>jsc://jsonRpcId.js</ResourceURL>
+</Javascript>

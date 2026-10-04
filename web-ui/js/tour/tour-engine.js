@@ -17,7 +17,7 @@ const SEEN_KEY = 'biscuitTour.seenThisSession';
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const resolve = (v, ...args) => (typeof v === 'function' ? v(...args) : v);
 const CLOSE_BTN = '<button type="button" class="tour-close" data-act="dismiss" title="Close (Esc)" aria-label="Close tour">×</button>';
-const PERSONA_LABEL = { guest: 'Guest (logged out)', customer: 'Customer (John)', customer2: 'Customer 2 (Michael)', manager: 'Store Manager (Alice)' };
+const PERSONA_LABEL = { guest: 'Guest (logged out)', customer: 'Customer (John)', customer2: 'Customer 2 (Michael)' };
 
 export class GuidedTour {
   constructor(app) {
@@ -67,10 +67,10 @@ export class GuidedTour {
               <span class="tour-choice-badge">Recommended</span>
               <span class="tour-choice-icon">🗺️</span>
               <span class="tour-choice-title">Guided Tour</span>
-              <span class="tour-choice-meta">${MISSIONS.filter((m) => !m.bonus).length} short missions + bonus · about 10 min</span>
+              <span class="tour-choice-meta">${MISSIONS.filter((m) => !m.bonus).length} short missions · about 12 min</span>
               <ul class="tour-choice-list">
                 <li>Public vs logged-in access</li>
-                <li>Role-based blocking (403)</li>
+                <li>Least-privilege tools and order approval</li>
                 <li>Order limits and rate limits</li>
                 <li>Audit logs in Cloud Logging</li>
               </ul>
@@ -162,7 +162,19 @@ export class GuidedTour {
     window.addEventListener('resize', reflow);
     window.addEventListener('scroll', reflow, true);
     // Sidebar content and drawers move around; keep the spotlight glued on.
-    setInterval(() => {
+    // The ticker only runs while a step / explainer is on screen (ensureTicker).
+    this.ticker = 0;
+  }
+
+  /** Start the 300 ms layout ticker; it stops itself once the tour is idle. */
+  ensureTicker() {
+    if (this.ticker) return;
+    this.ticker = setInterval(() => {
+      if (!['step', 'explainer', 'finished'].includes(this.mode)) {
+        clearInterval(this.ticker);
+        this.ticker = 0;
+        return;
+      }
       this.syncDrawerState();
       if (this.mode === 'step') this.position();
     }, 300);
@@ -210,6 +222,7 @@ export class GuidedTour {
     // Login and chat steps happen in the main UI: get the Settings drawer out of the way.
     if (s.kind === 'persona' || s.kind === 'prompt') this.closeSettings();
     this.mode = 'step';
+    this.ensureTicker();
     this.hint = '';
     this.promptStaged = false;
     this.explainer.hidden = true;
@@ -274,7 +287,7 @@ export class GuidedTour {
       <ul class="tour-exp-summary">
         <li>Turn MCP requests into REST calls for existing APIs</li>
         <li>Pass the user's Keycloak identity through the agent</li>
-        <li>Block tools by role (403) and by object owner (404)</li>
+        <li>Expose only the tools in each app's API Product, and block other users' orders (404)</li>
         <li>Enforce order-value limits (422) and per-tool quotas (429)</li>
         <li>Send an audit trail to Cloud Logging</li>
       </ul>
@@ -283,6 +296,7 @@ export class GuidedTour {
         <button type="button" class="tour-btn tour-btn-primary" data-act="close">Continue exploring</button>
       </div>`;
     this.mode = 'finished';
+    this.ensureTicker();
     this.explainer.hidden = false;
     this.explainer.querySelector('[data-act="restart"]').onclick = () => this.start(0, true);
     this.explainer.querySelectorAll('[data-act="close"], [data-act="dismiss"]').forEach((b) => {
@@ -293,11 +307,6 @@ export class GuidedTour {
   // ------------------------------------------------------------------ events
   onToolResult({ toolCall, text }) {
     if (!this.state.active) return;
-    // Remember an order ID seen as John - used by the bonus ownership mission.
-    if (this.persona === 'customer' && !this.state.ctx.orderId) {
-      const m = String(text || '').match(/\border\s*(?:id|number|#)?\s*(?:is|:|#)?\s*#?(\d{4,})/i);
-      if (m) this.state.ctx.orderId = m[1];
-    }
     const s = this.step;
     if (this.mode !== 'step' || !s) { this.save(); return; }
     if (s.onResult) s.onResult(toolCall, text, this.state.ctx);
@@ -394,15 +403,20 @@ export class GuidedTour {
     else if (s.kind === 'prompt') primary = '<button type="button" class="tour-btn tour-btn-primary" data-act="prompt">Use this prompt</button>';
     else if (s.action) primary = `<button type="button" class="tour-btn tour-btn-primary" data-act="action">${esc(resolve(s.action.label, this))}</button>`;
 
+    // Body/progress templates contain the missions' own markup; any context
+    // value they interpolate (order ids from tool results, storage) is escaped.
+    const safeCtx = Object.fromEntries(Object.entries(ctx || {}).map(([k, v]) =>
+      [k, (typeof v === 'string' || typeof v === 'number') ? esc(v) : v]));
+
     this.pop.innerHTML = `${CLOSE_BTN}
       <span class="tour-pop-arrow"></span>
       <div class="tour-pop-kicker">${kicker}</div>
       <h3 class="tour-pop-title">${esc(s.title)}</h3>
-      <div class="tour-pop-body">${resolve(s.body, ctx)}</div>
+      <div class="tour-pop-body">${resolve(s.body, safeCtx)}</div>
       ${s.kind === 'prompt' ? `<div class="tour-prompt-preview">“${esc(resolve(s.prompt, ctx))}”</div>` : ''}
       ${creds ? `${credsHowTo}<div class="tour-creds">${creds}</div>` : ''}
       ${s.expect ? `<div class="tour-expect">Expected: <b>${esc(s.expect)}</b></div>` : ''}
-      ${s.progress ? `<div class="tour-progress">${s.progress(ctx)}</div>` : ''}
+      ${s.progress ? `<div class="tour-progress">${s.progress(safeCtx)}</div>` : ''}
       ${wrongPersona ? `<div class="tour-warn">This step needs <b>${s.requires.map((p) => esc(PERSONA_LABEL[p])).join(' or ')}</b>. You're signed in as <b>${esc(PERSONA_LABEL[this.persona])}</b>.
           <button type="button" class="tour-btn tour-btn-small" data-act="auth">${this.persona === 'guest' ? 'Log in' : 'Log out'}</button></div>` : ''}
       ${this.hint ? `<div class="tour-hint">${this.hint}</div>` : ''}
@@ -462,6 +476,7 @@ export class GuidedTour {
   showExplainer() {
     const m = this.mission, ex = m.explainer || {};
     this.mode = 'explainer';
+    this.ensureTicker();
     this.spot.hidden = true; this.dim.hidden = true;
     this.pop.hidden = true;
     this.renderStepper();

@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!--
+  AUDIT LOGGING - human-in-the-loop (event approval_required): an order between
+  the approval threshold and the cap was saved as PENDING_APPROVAL. It now waits
+  for a staff decision in the Staff app (decideOrder).
+
+  PostClientFlow, gated on order.requires_approval = "true" and a 200 response.
+-->
+<MessageLogging continueOnError="true" enabled="true" name="ML-AuditApprovalRequired">
+  <DisplayName>ML-AuditApprovalRequired</DisplayName>
+  <CloudLogging>
+    <LogName>projects/{organization.name}/logs/apigee-consumer-audit</LogName>
+    <Message contentType="application/json">{
+  "event": "approval_required",
+  "timestamp": "{system.time}",
+  "epoch_ms": "{client.received.start.timestamp}",
+  "environment": "{environment.name}",
+  "proxy": "{apiproxy.name}",
+  "revision": "{apiproxy.revision}",
+  "correlation_id": "{escapeJSON(audit.correlation_id)}",
+  "consumer": {
+    "client_id": "{escapeJSON(audit.client_id)}",
+    "api_key_fp": "{audit.key_fp}"
+  },
+  "end_user": {
+    "sub": "{escapeJSON(audit.user.sub)}",
+    "username": "{escapeJSON(audit.user.username)}",
+    "email": "{escapeJSON(audit.user.email)}",
+    "name": "{escapeJSON(audit.user.name)}",
+    "scope": "{escapeJSON(audit.user.scope)}",
+    "role": "{audit.user.role}",
+    "jti": "{escapeJSON(audit.user.jti)}",
+    "verified": true
+  },
+  "request": {
+    "mcp_tool": "placeOrder",
+    "verb": "{request.verb}",
+    "path": "{escapeJSON(proxy.basepath)}{escapeJSON(proxy.pathsuffix)}",
+    "status": "{firstnonnull(response.status.code,error.status.code,message.status.code)}",
+    "client_ip": "{client.ip}"
+  },
+  "detail": {
+    "order_id": "{escapeJSON(orderres.order_id)}",
+    "order_total": "{order.total_display}",
+    "approval_threshold": "{order.approval_threshold_display}",
+    "threshold_source": "{order.threshold_source}",
+    "order_max": "{order.max_display}",
+    "approval_channel": "staff-app"
+  }
+}</Message>
+    <Labels>
+      <Label>
+        <Key>event</Key>
+        <Value>approval_required</Value>
+      </Label>
+    </Labels>
+    <ResourceType>api</ResourceType>
+  </CloudLogging>
+</MessageLogging>

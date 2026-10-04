@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!--
+  Caches the governing product's attributes for 60 s, so a product change
+  (e.g. maxOrderAmount) takes effect within a minute.
+-->
+<PopulateCache continueOnError="true" enabled="true" name="PC-ProductAttrs">
+  <DisplayName>PC-ProductAttrs</DisplayName>
+  <CacheKey>
+    <KeyFragment>product-attrs</KeyFragment>
+    <KeyFragment ref="product.name"/>
+  </CacheKey>
+  <Scope>Application</Scope>
+  <Source>productattrs.json</Source>
+  <ExpirySettings>
+    <TimeoutInSec>60</TimeoutInSec>
+  </ExpirySettings>
+</PopulateCache>

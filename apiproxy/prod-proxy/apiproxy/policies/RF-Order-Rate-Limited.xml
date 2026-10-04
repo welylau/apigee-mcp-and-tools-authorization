@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!-- QU-PlaceOrderPerUser exceeded. Same {error, message} shape as the other refusals. -->
+<RaiseFault continueOnError="false" enabled="true" name="RF-Order-Rate-Limited">
+  <DisplayName>RF-Order-Rate-Limited</DisplayName>
+  <FaultResponse>
+    <Set>
+      <Headers>
+        <Header name="Content-Type">application/json</Header>
+        <Header name="Retry-After">60</Header>
+      </Headers>
+      <Payload contentType="application/json">{
+  "error": "order_rate_limited",
+  "message": "You've placed several orders in the last minute. Please wait a minute before placing another one, or ask our staff for help."
+}</Payload>
+      <StatusCode>429</StatusCode>
+      <ReasonPhrase>Too Many Requests</ReasonPhrase>
+    </Set>
+  </FaultResponse>
+  <IgnoreUnresolvedVariables>true</IgnoreUnresolvedVariables>
+</RaiseFault>

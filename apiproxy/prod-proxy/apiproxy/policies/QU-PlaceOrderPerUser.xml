@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!--
+  At most 5 POST /orders per verified user per minute on this proxy.
+  Deliberately looser than the MCP product quota (3/min on
+  tools/call/placeOrder), so MCP callers still see the MCP 429 first; this one
+  stops direct REST callers who bypass the MCP server.
+  continueOnError so RF-Order-Rate-Limited returns a friendly body.
+-->
+<Quota continueOnError="true" enabled="true" name="QU-PlaceOrderPerUser">
+  <DisplayName>QU-PlaceOrderPerUser</DisplayName>
+  <Identifier ref="caller.id"/>
+  <Allow count="5"/>
+  <Interval>1</Interval>
+  <TimeUnit>minute</TimeUnit>
+  <Distributed>true</Distributed>
+  <Synchronous>true</Synchronous>
+</Quota>

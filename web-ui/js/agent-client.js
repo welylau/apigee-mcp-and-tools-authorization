@@ -7,8 +7,23 @@
 import { simulateAgentResponse } from './mock-agent.js';
 
 export class AdkAgentClient {
+  /** Display name when the token carries no name claim: the email local part. */
+  static fallbackName(email) {
+    const e = String(email || '');
+    const local = e.split('@')[0];
+    return local ? local.charAt(0).toUpperCase() + local.slice(1) : e;
+  }
+
+  /** Random, unguessable guest id (the BFF only accepts guest-<16..64 alnum>). */
   generateGuestId() {
-    return 'guest_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
+    const bytes = new Uint8Array(16);
+    crypto.getRandomValues(bytes);
+    return 'guest-' + Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+  }
+
+  isGuestId(id) {
+    const v = String(id || '');
+    return !v || v.startsWith('guest-') || v.startsWith('guest_') || v.includes('guest@');
   }
 
   constructor(config = {}) {
@@ -20,7 +35,11 @@ export class AdkAgentClient {
     this.sessionId = null;
     this.sessionUserId = null;
     this.isLiveAvailable = false;
-    this.mode = 'auto'; // 'auto', 'live', or 'simulate'
+    // The offline simulator is only used when explicitly requested with
+    // ?simulate=1; otherwise a failed live call is shown as an error.
+    this.simulateAllowed = typeof window !== 'undefined' &&
+      new URLSearchParams(window.location.search).get('simulate') === '1';
+    this.mode = this.simulateAllowed ? 'auto' : 'live'; // 'auto', 'live', or 'simulate'
   }
 
   setRole(role) {
@@ -30,7 +49,32 @@ export class AdkAgentClient {
   }
 
   setMode(mode) {
-    this.mode = mode;
+    // Without ?simulate=1 only live mode exists.
+    this.mode = this.simulateAllowed ? mode : 'live';
+  }
+
+  /** Headers for BFF -> ADK calls: the signed-in user's bearer token, if any. */
+  async authHeaders(extra = {}) {
+    if (this.isGuestId(this.userId)) return { ...extra };
+    const token = await this.ensureFreshToken(this.userId);
+    return token && token.access_token ? { ...extra, Authorization: `Bearer ${token.access_token}` } : { ...extra };
+  }
+
+  /** Error carrying the BFF's own status + message (401/403 shown as-is). */
+  async bffError(res, what) {
+    let body = null;
+    let raw = '';
+    try {
+      raw = await res.text();
+      body = JSON.parse(raw);
+    } catch (e) { /* not JSON */ }
+    if (body && body.error === 'role_not_allowed') this.lastGateMessage = body.message;
+    const msg = (body && (body.message || body.error_description || (typeof body.detail === 'string' ? body.detail : '') || body.error)) ||
+      raw.slice(0, 300) || res.statusText || 'request failed';
+    const err = new Error(`${what} (HTTP ${res.status}): ${msg}`);
+    err.status = res.status;
+    err.detail = raw;
+    return err;
   }
 
   /**
@@ -43,7 +87,7 @@ export class AdkAgentClient {
   readStoredTokenRaw(userId = null) {
     try {
       const effectiveUser = userId || this.userId;
-      if (!effectiveUser || effectiveUser.startsWith('guest') || effectiveUser.includes('guest@')) {
+      if (this.isGuestId(effectiveUser)) {
         return null; // Guests never have stored tokens
       }
 
@@ -96,9 +140,6 @@ export class AdkAgentClient {
     try {
       if (userId) localStorage.removeItem(`biscuit_auth_${userId}`);
       localStorage.removeItem('biscuit_auth_active_session');
-      localStorage.removeItem('biscuit_auth_customer@biscuit-coffee.com');
-      localStorage.removeItem('biscuit_auth_customer2@biscuit-coffee.com');
-      localStorage.removeItem('biscuit_auth_manager@biscuit-coffee.com');
       if (this.userId) localStorage.removeItem(`biscuit_auth_${this.userId}`);
       for (let i = localStorage.length - 1; i >= 0; i--) {
         const key = localStorage.key(i);
@@ -152,8 +193,17 @@ export class AdkAgentClient {
         // Token explicitly revoked or expired upstream
         this.clearStoredToken(userId);
         return null;
+      } else if (res.status === 403) {
+        // The BFF's role gate refused this user for this app variant (e.g. a
+        // store manager in the customer app). Drop the token; app.js shows why.
+        const body = await res.json().catch(() => ({}));
+        if (body && body.error === 'role_not_allowed') {
+          this.lastGateMessage = body.message || 'This account cannot use this app.';
+          this.clearStoredToken(userId);
+          return null;
+        }
       }
-      // If 403 or other non-401 status, do NOT wipe valid unexpired local token
+      // Other non-401 statuses: do NOT wipe a valid unexpired local token
     } catch (e) {
       // Offline fallback: keep token active if unexpired
     }
@@ -189,22 +239,18 @@ export class AdkAgentClient {
       } catch (e) {}
     }
 
-    const targetEmail = claims.email || idClaims.email || claims.preferred_username || idClaims.preferred_username || previous?.userinfo?.email || 'customer@biscuit-coffee.com';
+    const targetEmail = String(claims.email || idClaims.email || claims.preferred_username || idClaims.preferred_username || previous?.userinfo?.email || 'customer@biscuit-coffee.com').toLowerCase();
     let targetName = claims.name || idClaims.name || claims.preferred_username || idClaims.preferred_username || targetEmail;
-    if (targetEmail.includes('manager') && targetName === targetEmail) {
-      targetName = 'Alice (Manager)';
-    } else if (targetEmail.includes('customer2') && targetName === targetEmail) {
-      targetName = 'Michael Bosh';
-    } else if (targetEmail.includes('customer') && targetName === targetEmail) {
-      targetName = 'John Smith';
-    }
+    if (targetName === targetEmail) targetName = AdkAgentClient.fallbackName(targetEmail);
 
     // Determine scopes from tokens.scope, claims.scope, or realm_access roles
     let tokenScopes = tokens.scope || claims.scope || '';
     const realmRoles = claims.realm_access?.roles || [];
     if (!tokenScopes) {
-      if (realmRoles.includes('biscuit_coffee_manager') || targetEmail.includes('manager')) {
-        tokenScopes = 'biscuit_coffee_customer biscuit_coffee_manager';
+      if (realmRoles.includes('biscuit_coffee_manager') || realmRoles.includes('manager')) {
+        tokenScopes = 'biscuit_coffee_staff biscuit_coffee_manager';
+      } else if (realmRoles.includes('staff')) {
+        tokenScopes = 'biscuit_coffee_staff';
       } else {
         tokenScopes = 'biscuit_coffee_customer';
       }
@@ -227,16 +273,17 @@ export class AdkAgentClient {
     };
   }
 
-  async exchangeAuthCode(code, redirectUri) {
+  async exchangeAuthCode(code, redirectUri, codeVerifier) {
     const res = await fetch(`${this.baseUrl}/api/oauth/exchange`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ code, redirect_uri: redirectUri })
+      body: JSON.stringify({ code, redirect_uri: redirectUri, code_verifier: codeVerifier })
     });
 
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
-      throw new Error(err.error_description || err.error || `Keycloak token exchange failed (HTTP ${res.status})`);
+      if (err && err.error === 'role_not_allowed') this.lastGateMessage = err.message;
+      throw new Error(err.message || err.error_description || err.error || `Keycloak token exchange failed (HTTP ${res.status})`);
     }
 
     const tokens = await res.json();
@@ -279,6 +326,10 @@ export class AdkAgentClient {
         });
 
         if (!res.ok) {
+          if (res.status === 403) {
+            const err = await res.json().catch(() => ({}));
+            if (err && err.error === 'role_not_allowed') this.lastGateMessage = err.message;
+          }
           this.clearStoredToken(userId);
           return null;
         }
@@ -318,34 +369,26 @@ export class AdkAgentClient {
   }
 
   async logoutKeycloak(userId = null) {
-    // Raw read: the access token may already have expired, but the refresh
-    // token is what Keycloak needs in order to actually kill the session.
-    const tokenData = this.readStoredTokenRaw(userId);
+    // Renew first if needed: the BFF identifies whose ADK sessions to delete
+    // from a valid access token. The refresh token is revoked as well.
+    const fresh = await this.ensureFreshToken(userId).catch(() => null);
+    const tokenData = fresh || this.readStoredTokenRaw(userId);
     const refreshToken = tokenData?.refresh_token;
+    const headers = { 'Content-Type': 'application/json' };
+    if (tokenData?.access_token) headers.Authorization = `Bearer ${tokenData.access_token}`;
 
-    // 1. Call server logout to revoke Keycloak session and flush ADK cache
+    // Server side: delete this user's ADK sessions + revoke Keycloak tokens.
     try {
       await fetch(`${this.baseUrl}/api/oauth/logout`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({ refresh_token: refreshToken })
       });
     } catch (e) {
       console.warn('Failed to call server logout:', e);
     }
 
-    // 2. Clear stored tokens
     this.clearStoredToken(userId);
-
-    // 3. Delete ADK session on server if exists
-    if (this.sessionId && this.userId) {
-      try {
-        await fetch(`${this.baseUrl}/apps/${this.appName}/users/${encodeURIComponent(this.userId)}/sessions/${this.sessionId}`, {
-          method: 'DELETE'
-        });
-      } catch (e) {}
-    }
-
     this.sessionId = null;
     this.sessionUserId = null;
     this.userId = this.generateGuestId();
@@ -382,24 +425,30 @@ export class AdkAgentClient {
       this.sessionId = null;
     }
 
+    let res;
     try {
-      const res = await fetch(`${this.baseUrl}/apps/${this.appName}/users/${encodeURIComponent(this.userId)}/sessions`, {
+      res = await fetch(`${this.baseUrl}/apps/${encodeURIComponent(this.appName)}/users/${encodeURIComponent(this.userId)}/sessions`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: await this.authHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({})
       });
-
-      if (res.ok) {
-        const session = await res.json();
-        this.sessionId = session.id || session.session_id;
-        this.sessionUserId = this.userId;
-        return this.sessionId;
-      }
     } catch (e) {
       console.warn('Could not create remote ADK session:', e);
+      if (this.simulateAllowed) return this.localSession();
+      throw new Error('The agent runtime is unreachable. Please try again in a moment.');
     }
+    if (res.ok) {
+      const session = await res.json();
+      this.sessionId = session.id || session.session_id;
+      this.sessionUserId = this.userId;
+      return this.sessionId;
+    }
+    if (this.simulateAllowed) return this.localSession();
+    throw await this.bffError(res, 'Could not start a chat session');
+  }
 
-    // Fallback local session ID
+  /** Simulator-only (?simulate=1) local session id. */
+  localSession() {
     this.sessionId = 'local-sess-' + Date.now();
     this.sessionUserId = this.userId;
     return this.sessionId;
@@ -412,14 +461,16 @@ export class AdkAgentClient {
    *   onToolCall(name)   - the agent is calling an Apigee tool
    * The resolved value is the same {text, toolCall} shape as before, built from
    * the complete (non-partial) events, so tool cards and the tour are unchanged.
+   *
+   * The offline simulator is only used with ?simulate=1. Otherwise any failure
+   * (including the BFF's 401/403 refusals) is thrown with the BFF's message.
    */
   async sendMessage(text, currentRole, handlers = null) {
-    // If user explicitly forces simulation or live backend is unreachable
-    if (this.mode === 'simulate') {
+    if (this.simulateAllowed && this.mode === 'simulate') {
       return await simulateAgentResponse(text, currentRole);
     }
 
-    if (this.mode === 'auto') {
+    if (this.simulateAllowed && this.mode === 'auto') {
       const health = await this.checkLiveHealth();
       if (!health.available) {
         return await simulateAgentResponse(text, currentRole);
@@ -430,23 +481,20 @@ export class AdkAgentClient {
     try {
       await this.ensureSession();
 
-      const isGuest = !this.userId || this.userId.startsWith('guest') || this.userId.includes('guest@');
-      // Renew here too: the 30s poll could be up to 30s stale, and this token
-      // is about to be handed to the agent for a call through Apigee.
+      const isGuest = this.isGuestId(this.userId);
+      // Renew here too: the 30s poll could be up to 30s stale. The BFF takes
+      // the token from the Authorization header and sets the agent's session
+      // state (access_token, user_email, scope) from the verified token itself.
       const activeToken = isGuest ? null : await this.ensureFreshToken(this.userId);
       const userEmail = isGuest ? this.userId : (activeToken?.userinfo?.email || this.userId);
-      const userName = isGuest ? '' : (activeToken?.userinfo?.name || (userEmail.includes('manager') ? 'Alice (Manager)' : (userEmail.includes('customer2') ? 'Michael Bosh' : 'John Smith')));
+      const userName = isGuest ? '' : (activeToken?.userinfo?.name || AdkAgentClient.fallbackName(userEmail));
 
       const runPayload = {
         appName: this.appName,
         userId: this.userId,
         sessionId: this.sessionId,
         state_delta: {
-          user_email: userEmail,
-          user_name: userName,
-          is_authenticated: !isGuest,
-          active_scope: isGuest ? '' : (activeToken?.scope || ''),
-          access_token: isGuest ? '' : (activeToken?.access_token || '')
+          user_name: userName
         },
         newMessage: {
           role: 'user',
@@ -468,7 +516,7 @@ export class AdkAgentClient {
 
       if (!run.ok) {
         console.error(`ADK Server responded with HTTP ${run.status}:`, run.errDetail);
-        throw new Error(`ADK Server responded with HTTP ${run.status}: ${run.errDetail}`);
+        throw this.runError(run);
       }
 
       let parsed = this.parseAdkEvents(run.events);
@@ -488,11 +536,24 @@ export class AdkAgentClient {
 
       return parsed;
     } catch (err) {
+      if (!this.simulateAllowed) throw err;
       console.warn('ADK live invocation error, falling back to simulator:', err);
       const simResult = await simulateAgentResponse(text, currentRole);
       simResult.liveError = `ADK Live Server notice: ${err.message} (showing simulated output)`;
       return simResult;
     }
+  }
+
+  /** Error for a failed run, carrying the BFF's own message. */
+  runError(run) {
+    let body = null;
+    try { body = JSON.parse(run.errDetail); } catch (e) { /* not JSON */ }
+    if (body && body.error === 'role_not_allowed') this.lastGateMessage = body.message;
+    const msg = (body && (body.message || (typeof body.detail === 'string' ? body.detail : '') || body.error)) ||
+      String(run.errDetail || '').slice(0, 300) || 'request failed';
+    const err = new Error(`The agent request failed (HTTP ${run.status}): ${msg}`);
+    err.status = run.status;
+    return err;
   }
 
   async readError(res) {
@@ -513,12 +574,13 @@ export class AdkAgentClient {
    */
   async postRun(payload, handlers) {
     const canStream = !!handlers && typeof ReadableStream !== 'undefined' && typeof TextDecoder !== 'undefined';
+    const headers = await this.authHeaders({ 'Content-Type': 'application/json' });
     if (canStream) {
       let res = null;
       try {
         res = await fetch(`${this.baseUrl}/run_sse`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
+          headers: { ...headers, Accept: 'text/event-stream' },
           body: JSON.stringify({ ...payload, streaming: true })
         });
       } catch (e) {
@@ -533,7 +595,7 @@ export class AdkAgentClient {
 
     const res = await fetch(`${this.baseUrl}/run`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify(payload)
     });
     if (!res.ok) return { ok: false, status: res.status, errDetail: await this.readError(res) };
@@ -601,13 +663,12 @@ export class AdkAgentClient {
     let authConfig = rawArgs.authConfig || rawArgs.auth_config || rawArgs;
     authConfig = structuredClone(authConfig);
 
+    // Access token only: refresh/id tokens never go into the agent's session.
     authConfig.exchangedAuthCredential = {
       authType: 'oauth2',
       oauth2: {
         accessToken: tokenData.access_token,
-        tokenType: tokenData.token_type || 'Bearer',
-        refreshToken: tokenData.refresh_token || undefined,
-        idToken: tokenData.id_token || undefined
+        tokenType: tokenData.token_type || 'Bearer'
       }
     };
 
@@ -634,106 +695,12 @@ export class AdkAgentClient {
 
     const res = await fetch(`${this.baseUrl}/run`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: await this.authHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify(runPayload)
     });
 
     if (!res.ok) {
-      let errDetail = '';
-      try {
-        const errJson = await res.json();
-        errDetail = typeof errJson === 'object' ? JSON.stringify(errJson) : String(errJson);
-      } catch (e) {
-        errDetail = await res.text().catch(() => '');
-      }
-      console.error(`ADK Server responded with HTTP ${res.status}:`, errDetail);
-      throw new Error(`ADK Server responded with HTTP ${res.status}: ${errDetail}`);
-    }
-
-    const events = await res.json();
-    return this.parseAdkEvents(events);
-  }
-
-  async sendOAuthResponse(rawFunctionCall, authResponseUrl, redirectUri) {
-    await this.ensureSession();
-
-    const rawArgs = rawFunctionCall?.args || {};
-    let authConfig = rawArgs.authConfig || rawArgs.auth_config || rawArgs;
-    authConfig = structuredClone(authConfig);
-
-    if (!authConfig.exchangedAuthCredential) {
-      authConfig.exchangedAuthCredential = {};
-    }
-    if (!authConfig.exchangedAuthCredential.oauth2) {
-      authConfig.exchangedAuthCredential.oauth2 = {};
-    }
-    authConfig.exchangedAuthCredential.authType = 'oauth2';
-    authConfig.exchangedAuthCredential.oauth2.authResponseUri = authResponseUrl;
-    authConfig.exchangedAuthCredential.oauth2.redirectUri = redirectUri;
-
-    // Cache the token locally so the UI updates to Logged In state
-    try {
-      const u = new URL(authResponseUrl);
-      const code = u.searchParams.get('code');
-      if (code) {
-        const tokenData = await this.exchangeAuthCode(code, redirectUri);
-        if (tokenData && tokenData.access_token) {
-          authConfig.exchangedAuthCredential.authType = 'oauth2';
-          authConfig.exchangedAuthCredential.oauth2.accessToken = tokenData.access_token;
-          authConfig.exchangedAuthCredential.oauth2.tokenType = tokenData.token_type || 'Bearer';
-          if (tokenData.refresh_token) authConfig.exchangedAuthCredential.oauth2.refreshToken = tokenData.refresh_token;
-          if (tokenData.id_token) authConfig.exchangedAuthCredential.oauth2.idToken = tokenData.id_token;
-        }
-      }
-    } catch (e) {
-      console.warn('Could not cache token from OAuth response:', e);
-    }
-
-    const resumeSessionId = this.sessionId;
-    const resumeUserId = this.sessionUserId || this.userId;
-
-    const activeToken = this.getStoredToken(this.userId);
-    const userEmail = activeToken?.userinfo?.email || this.userId;
-    const userName = activeToken?.userinfo?.name || (userEmail.includes('manager') ? 'Alice (Manager)' : (userEmail.includes('customer2') ? 'Michael Bosh' : (userEmail.includes('customer') ? 'John Smith' : '')));
-
-    const runPayload = {
-      appName: this.appName,
-      userId: resumeUserId,
-      sessionId: resumeSessionId,
-      state_delta: {
-        user_email: userEmail,
-        user_name: userName
-      },
-      newMessage: {
-        role: 'user',
-        parts: [
-          {
-            functionResponse: {
-              id: rawFunctionCall.id,
-              name: rawFunctionCall.name,
-              response: authConfig
-            }
-          }
-        ]
-      }
-    };
-
-    const res = await fetch(`${this.baseUrl}/run`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(runPayload)
-    });
-
-    if (!res.ok) {
-      let errDetail = '';
-      try {
-        const errJson = await res.json();
-        errDetail = typeof errJson === 'object' ? JSON.stringify(errJson) : String(errJson);
-      } catch (e) {
-        errDetail = await res.text().catch(() => '');
-      }
-      console.error(`ADK Server responded with HTTP ${res.status}:`, errDetail);
-      throw new Error(`ADK Server responded with HTTP ${res.status}: ${errDetail}`);
+      throw await this.bffError(res, 'The agent request failed');
     }
 
     const events = await res.json();
@@ -787,7 +754,7 @@ export class AdkAgentClient {
         isPolicyBlock: true,
         endpoint: 'Apigee → Biscuit-Coffee-Shop → POST /orders',
         policy: 'JS-CheckOrderValue → RF-Order-Limit-Exceeded',
-        enforcedBy: 'maxOrderAmount attribute on the placeOrder API Product operation',
+        enforcedBy: 'maxOrderAmount attribute on the API Product (resolved from the verified token azp)',
         // The caller was authorised; it is the order value that was refused.
         scopeRequired: 'biscuit_coffee_customer',
         resultLabel: 'Policy Result',
@@ -804,8 +771,8 @@ export class AdkAgentClient {
     // The gateway returns the same 404 whether the order does not exist or
     // simply is not this customer's, so that the API cannot be used to discover
     // which order IDs are real; labelling one case differently here would put
-    // that oracle straight back. The real reason is available to the operator
-    // in the X-Debug-Reason response header and in a trace.
+    // that oracle straight back. Operators find the real reason in an Apigee
+    // trace; nothing here depends on response headers.
     if (innerText.includes('order_not_found') || respStr.includes('order_not_found')) {
       let message = '';
       try {
@@ -887,6 +854,31 @@ export class AdkAgentClient {
         resultLabel: 'Result',
         error: (innerText || respStr).slice(0, 200)
       };
+    }
+
+    // --- Human-in-the-loop: order accepted but waiting for manager approval ---
+    // AM-OrderConfirmation adds a machine-readable `status`; the sentence is
+    // owned by Apigee and may change, so it is not parsed here.
+    if (toolName === 'placeOrder' && innerText) {
+      let body = null;
+      try {
+        body = JSON.parse(innerText);
+      } catch (e) {
+        body = null;
+      }
+      if (body && body.order_id && body.status === 'PENDING_APPROVAL') {
+        return {
+          status: 'PENDING',
+          statusClass: 'pending',
+          success: true,
+          isPendingApproval: true,
+          pendingOrderId: String(body.order_id),
+          endpoint: 'Apigee → Biscuit-Coffee-Shop → POST /orders',
+          policy: 'JS-CheckOrderValue → PENDING_APPROVAL (staff approval in Staff app)',
+          enforcedBy: 'approvalThreshold attribute on the API Product (resolved from the verified token azp)',
+          scopeRequired: 'biscuit_coffee_customer'
+        };
+      }
     }
 
     return { status: '200 OK', statusClass: 'success', success: true };
@@ -998,10 +990,11 @@ export class AdkAgentClient {
     // Surface whichever one the gateway actually blocked - that is the whole
     // point of the card - and otherwise the last call made.
     const blocked = calls.find(c => c.success === false);
-    const toolCall = authCall || blocked || calls[calls.length - 1] || null;
+    const pending = calls.find(c => c.isPendingApproval);
+    const toolCall = authCall || blocked || pending || calls[calls.length - 1] || null;
 
     if (toolCall && toolCall.isAuth) {
-      combinedText = `🔒 **Keycloak Authentication Required**\n\nThe AI Agent requires 3-legged OAuth authorization to execute tools on the Biscuit Coffee Apigee Gateway.\n\nPlease click the **Login** button below to authenticate.\n\n• **Customer 1 (John Smith)**: \`customer@biscuit-coffee.com\` (password: \`ilovecoffee\`)\n• **Customer 2 (Michael Bosh)**: \`customer2@biscuit-coffee.com\` (password: \`ilovecoffee\`)\n• **Store Manager (Alice)**: \`manager@biscuit-coffee.com\` (password: \`ilovecoffee\`)`;
+      combinedText = `🔒 **Keycloak Authentication Required**\n\nThe AI Agent requires 3-legged OAuth authorization to execute tools on the Biscuit Coffee Apigee Gateway.\n\nPlease click the **Login** button below and sign in with your customer account.`;
     } else if (!combinedText && relayText) {
       combinedText = relayText;
     } else if (!combinedText) {

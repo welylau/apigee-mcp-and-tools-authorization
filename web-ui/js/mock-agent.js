@@ -39,18 +39,11 @@ export const MOCK_DATABASE = {
   users: {
     "customer@biscuit-coffee.com": {
       name: "John Smith",
-      loyalty_points: 120,
-      payment_methods: ["Visa ending in 4242 (Default)", "Apple Pay"]
+      loyalty_points: 120
     },
     "customer2@biscuit-coffee.com": {
       name: "Michael Bosh",
-      loyalty_points: 95,
-      payment_methods: ["MasterCard ending in 5512 (Default)"]
-    },
-    "manager@biscuit-coffee.com": {
-      name: "Alice Manager",
-      loyalty_points: 450,
-      payment_methods: ["MasterCard ending in 8899 (Corporate)"]
+      loyalty_points: 95
     }
   },
   orders: {
@@ -65,7 +58,7 @@ export const MOCK_DATABASE = {
 
 export async function simulateAgentResponse(userText, currentRole) {
   const query = userText.toLowerCase().trim();
-  const user = MOCK_DATABASE.users[currentRole.email] || { name: "Guest", loyalty_points: 0, payment_methods: [] };
+  const user = MOCK_DATABASE.users[currentRole.email] || { name: "Guest", loyalty_points: 0 };
 
   // Simulated latency for realistic typing feel
   await new Promise(res => setTimeout(res, 600));
@@ -160,23 +153,7 @@ export async function simulateAgentResponse(userText, currentRole) {
     };
   }
 
-  // 5. Payment Methods
-  if (query.includes("payment") || query.includes("card") || query.includes("wallet") || query.includes("pay")) {
-    const methods = user.payment_methods.map(p => `• 💳 ${p}`).join("\n");
-    return {
-      text: `Here are the saved payment methods associated with your account (\`${currentRole.email}\`):\n\n${methods}\n\nWould you like to use one of these to place an order or add a new payment method?`,
-      toolCall: {
-        name: "mcp_proxy_getPaymentMethods",
-        endpoint: "GET /biscuit-coffee/payment-methods",
-        policy: "AM-GetPaymentMethods",
-        scopeRequired: "biscuit_coffee_customer",
-        status: "200 OK",
-        success: true
-      }
-    };
-  }
-
-  // 6. Order Listing / Status / Tracking
+  // 5. Order Listing / Status / Tracking
   if (query.includes("all of my orders") || query.includes("all orders") || query.includes("my orders") || query.includes("show all") || query.includes("status") || query.includes("track")) {
     return {
       text: `Here are all the active orders associated with your account (**${currentRole.email}**):\n\n• **Order #67449**: 1x Latte (Small) — \`Completed\` ($3.50)\n• **Order #67450**: 1x Americano (Medium) — \`Brewing / In Preparation\` ($3.75)\n\nLet me know if you would like more details or want to place another order!`,

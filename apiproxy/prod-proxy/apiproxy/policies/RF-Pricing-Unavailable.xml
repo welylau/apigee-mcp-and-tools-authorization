@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!--
+  The menu (prices) could not be loaded, so the gateway cannot price the order.
+  Fails closed: the order cap and the approval threshold must never be
+  evaluated against guessed prices.
+-->
+<RaiseFault continueOnError="false" enabled="true" name="RF-Pricing-Unavailable">
+  <DisplayName>RF-Pricing-Unavailable</DisplayName>
+  <FaultResponse>
+    <Set>
+      <Headers>
+        <Header name="Content-Type">application/json</Header>
+        <Header name="Retry-After">30</Header>
+      </Headers>
+      <Payload contentType="application/json">{
+  "error": "pricing_unavailable",
+  "message": "We can't price your order right now. Please try again in a moment."
+}</Payload>
+      <StatusCode>503</StatusCode>
+      <ReasonPhrase>Service Unavailable</ReasonPhrase>
+    </Set>
+  </FaultResponse>
+  <IgnoreUnresolvedVariables>true</IgnoreUnresolvedVariables>
+</RaiseFault>

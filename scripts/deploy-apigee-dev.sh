@@ -89,8 +89,7 @@ stage_mcp_dev() { # -> echoes staged apiproxy dir
             "$d/apiproxy/mcp-proxy-dev.xml"
   find "$d" -type f -exec sed -i '' \
     -e "s|@APIGEE_PROD_HOSTNAME@|$DEV_HOST|g" \
-    -e "s|@GCP_PROJECT_ID@|$PROJECT|g" \
-    -e "s|Apigee API Product quota (biscuit-coffee-agent)|Apigee API Product quota (biscuit-coffee-agent-dev)|g" {} +
+    -e "s|@GCP_PROJECT_ID@|$PROJECT|g" {} +
   echo "$d/apiproxy"
 }
 stage_biscuit_dev() {

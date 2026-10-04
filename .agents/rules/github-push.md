@@ -17,8 +17,9 @@ anything is committed and restored afterwards.
    - Never stage files containing local absolute paths (e.g. `/Users/...`).
 3. Run `./sanitize.sh`. Its leak check must report 0 before you continue.
 4. Review the staged diff:
-   - No secrets, and no values `sanitize.sh` doesn't mask (Apigee IPs, `*.nip.io` hosts, `/Users/` paths).
+   - No secrets, and no values `sanitize.sh` doesn't mask (Apigee IPs, `*.nip.io` hosts, `/Users/` paths, internal index URLs such as `airlock-proxy.uplink.goog` in `uv.lock`, shared static tokens/signatures in proxy JS or policies).
    - Nothing that should stay local is staged: `.env`, `web-ui/.env`, `.secrets_map.json`, `sanitize.sh`, `restore.sh`.
+   - `sanitize.sh` did not mangle code: env-var reads like `${KC_ADMIN_PASS:?...}` must stay as written, not become `YOUR_*` placeholders, and no `.secrets_map.json` value may be a `${...}` expression.
 5. Commit and push with the `git-update` skill (one confirmation per step). Ask the user for the commit message.
    - New branches: `git push -u origin <branch>`.
    - Never merge into `main` or force-push unless explicitly asked.

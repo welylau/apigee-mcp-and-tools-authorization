@@ -1,13 +1,23 @@
 import os
+import re
 import random
 import logging
-from typing import List, Optional
+from collections import Counter
+from datetime import datetime, timedelta, timezone
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+from typing import List, Literal, Optional
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, Query, Header
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from fastapi import Depends, FastAPI, HTTPException, Query, Header, Path, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.encoders import jsonable_encoder
+from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.responses import JSONResponse
+from google.api_core import exceptions as gcp_exceptions
+from pydantic import BaseModel, ConfigDict, Field
 from google.cloud import firestore
+
+from auth import Principal, current_principal
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("coffee-shop-backend")
@@ -15,6 +25,70 @@ logger = logging.getLogger("coffee-shop-backend")
 PROJECT_ID = os.getenv("GOOGLE_CLOUD_PROJECT", os.getenv("GCP_PROJECT", "YOUR_GCP_PROJECT_ID"))
 DATABASE_ID = os.getenv("FIRESTORE_DATABASE", "(default)")
 ORDERS_COLLECTION = os.getenv("ORDERS_COLLECTION", "coffee_orders")
+
+# --- Human-in-the-loop order approval ---------------------------------------
+# The API gateway marks an order that needs a person to approve it by sending
+# X-Order-Status: PENDING_APPROVAL. Only values in this set are accepted from
+# the header; anything else is ignored and the order is saved as IN_PROGRESS.
+STATUS_IN_PROGRESS = "IN_PROGRESS"
+STATUS_PENDING_APPROVAL = "PENDING_APPROVAL"
+STATUS_REJECTED = "REJECTED"
+ACCEPTED_INITIAL_STATUSES = {STATUS_PENDING_APPROVAL}
+
+# --- Caller identity and authorisation --------------------------------------
+# Cloud Run IAM decides who may reach this service (the Apigee service account
+# plus named operators). That is not a user identity, so every non-public
+# route also requires the user's Keycloak access token, which the
+# Biscuit-Coffee-Shop proxy forwards in X-User-Token. auth.py verifies it
+# (RS256 + JWKS, issuer, audience, expiry) and it is the ONLY source of the
+# caller's email, name and scopes; X-User-Email / X-User-Name / X-User-Scope
+# headers are ignored. The gateway also checks scopes per operation; the
+# checks here apply the same rules to the verified token.
+STATUS_READY = "READY"
+STATUS_COMPLETED = "COMPLETED"
+STATUS_CANCELLED = "CANCELLED"
+OrderStatus = Literal["PENDING_APPROVAL", "REJECTED", "IN_PROGRESS", "READY", "COMPLETED", "CANCELLED"]
+# Orders in these states change only through decideOrder.
+DECISION_ONLY_STATUSES = {STATUS_PENDING_APPROVAL, STATUS_REJECTED}
+# Staff progress updates (updateOrderStatus). Anything not listed -> 409.
+ALLOWED_TRANSITIONS = {
+    STATUS_IN_PROGRESS: {STATUS_READY, STATUS_CANCELLED},
+    STATUS_READY: {STATUS_COMPLETED, STATUS_CANCELLED},
+}
+ID_PATTERN = r"^[A-Za-z0-9_-]{1,64}$"
+EMAIL_PATTERN = r"^[^@\s/]{1,64}@[^@\s/]{1,190}\.[^@\s/]{2,}$"  # no "/": emails are Firestore doc ids
+NAME_PATTERN = r"^[^\x00-\x1f\x7f<>{}\[\]`]{1,80}$"
+PHONE_PATTERN = r"^[0-9+()\- ]{3,20}$"
+# Filters a manager may use on GET /orders (same allow-list as the gateway).
+ORDER_FILTER_KEYS = {"email", "name", "loyalty_id", "status"}
+ORDER_ID_ATTEMPTS = 5
+
+
+def _env_cents(name: str, default: str) -> int:
+    """Dollar amount from env (e.g. "50.00") as integer cents."""
+    raw = os.getenv(name) or default
+    try:
+        cents = int((Decimal(raw.strip()) * 100).to_integral_value(rounding=ROUND_HALF_UP))
+    except (InvalidOperation, ValueError):
+        logger.warning(f"Bad {name}={raw!r}; using {default}")
+        cents = int(Decimal(default) * 100)
+    return cents
+
+
+def _money_display(cents: int) -> str:
+    """"100" for whole dollars, "99.50" otherwise (as the gateway's checkOrderValue.js)."""
+    return str(cents // 100) if cents % 100 == 0 else f"{cents / 100:.2f}"
+
+
+# Order value rules, same as the gateway (JS-CheckOrderValue): a customer
+# order at or above ORDER_CAP is refused (422 order_limit_exceeded), and one
+# at or above APPROVAL_THRESHOLD waits for staff approval. Applied here too so
+# a caller that reaches the backend without the gateway's checks (or without
+# X-Order-Status) cannot skip them.
+APPROVAL_THRESHOLD_CENTS = _env_cents("APPROVAL_THRESHOLD", "50.00")
+ORDER_CAP_CENTS = _env_cents("ORDER_CAP", "100.00")
+DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+HHMM = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 
 db: Optional[firestore.Client] = None
 
@@ -89,7 +163,7 @@ SEED_ORDERS = [
         "name": "David",
         "loyalty_id": "L-12345",
         "items": [{"item_id": "item-1-s", "quantity": 2}],
-        "status": "COMPLETE",
+        "status": "COMPLETED",
         "total_amount": 6.50
     },
     {
@@ -107,6 +181,10 @@ SEED_ORDERS = [
     }
 ]
 
+# Seed orders get a created_at when they are written (minutes before seeding),
+# so they sort and count like real orders.
+SEED_ORDER_AGE_MINUTES = {"67449": 10, "10001": 24 * 60, "10002": 25}
+
 SEED_LOYALTY = [
     {
         "loyalty_id": "L-83983",
@@ -123,6 +201,134 @@ SEED_LOYALTY = [
         "points": 250
     }
 ]
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _parse_iso(value) -> Optional[datetime]:
+    try:
+        dt = datetime.fromisoformat(str(value))
+        return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+    except (TypeError, ValueError):
+        return None
+
+
+def require_staff(principal: Principal) -> None:
+    """Staff order operations: biscuit_coffee_staff or biscuit_coffee_manager."""
+    if not principal.is_staff:
+        raise HTTPException(status_code=403, detail={"message": "Staff access required"})
+
+
+def require_manager(principal: Principal) -> None:
+    """Employee, store and stats operations: biscuit_coffee_manager only."""
+    if not principal.is_manager:
+        raise HTTPException(status_code=403, detail={"message": "Store manager access required"})
+
+
+def _caller_email(principal: Principal) -> str:
+    """Verified email of the caller (from the token), or 403."""
+    if not principal.email:
+        raise HTTPException(status_code=403, detail={"message": "Caller identity missing"})
+    return principal.email
+
+
+def _order_not_found(order_id: str) -> HTTPException:
+    return HTTPException(status_code=404, detail={"message": f"Order {order_id} not found"})
+
+
+def _can_see_order(principal: Principal, order: dict) -> bool:
+    """Staff and managers see every order; anyone else only their own (by verified email)."""
+    if principal.is_staff:
+        return True
+    owner = str(order.get("email") or "").strip().lower()
+    return bool(principal.email) and owner == principal.email
+
+
+# Who-did-what fields for the store team only. A customer reading their own
+# order sees status, items, total, created_at and the decision + reason (the
+# UI shows why an order was rejected), but not staff emails or channels.
+STAFF_ONLY_ORDER_FIELDS = {"updated_by", "channel"}
+CUSTOMER_APPROVAL_FIELDS = {"decision", "reason", "decided_at"}
+
+
+def customer_order_view(order: dict) -> dict:
+    """Copy of `order` without staff-internal fields (for customer-scope reads)."""
+    view = {k: v for k, v in order.items() if k not in STAFF_ONLY_ORDER_FIELDS}
+    approval = order.get("approval")
+    if isinstance(approval, dict):
+        view["approval"] = {k: v for k, v in approval.items() if k in CUSTOMER_APPROVAL_FIELDS}
+    history = order.get("status_history")
+    if isinstance(history, list):
+        view["status_history"] = [
+            {k: v for k, v in h.items() if k != "by"} if isinstance(h, dict) else h for h in history
+        ]
+    return view
+
+
+def order_view_for(principal: Principal, order: dict) -> dict:
+    return order if principal.is_staff else customer_order_view(order)
+
+
+def decide_order(order_id: str, approved: bool, decided_by: str, channel: str,
+                 reason: Optional[str] = None, expected_status: Optional[str] = None) -> dict:
+    """Record an approve/reject decision for an order that is waiting for approval.
+
+    Called by decideOrder (staff app). A Firestore transaction makes sure only
+    the first decision for an order counts; any later decision gets 409.
+    """
+    client = get_firestore_client()
+    doc_ref = client.collection(ORDERS_COLLECTION).document(order_id)
+    decision = "APPROVED" if approved else "REJECTED"
+
+    @firestore.transactional
+    def _apply(txn):
+        snap = doc_ref.get(transaction=txn)
+        if not snap.exists:
+            raise HTTPException(status_code=404, detail={"message": f"Order {order_id} not found"})
+        data = snap.to_dict() or {}
+        current = data.get("status")
+        if expected_status and current != expected_status:
+            raise HTTPException(
+                status_code=409,
+                detail={"message": f"Order {order_id} changed: it is now {current}, not {expected_status}"},
+            )
+        if current != STATUS_PENDING_APPROVAL:
+            raise HTTPException(
+                status_code=409,
+                detail={"message": f"Order {order_id} is not waiting for approval (status {current})"},
+            )
+        # Staff and managers can also sign in to the customer app (the customer
+        # client grants biscuit_coffee_customer to every realm user), so they
+        # could place an order and then approve it themselves. Not allowed.
+        if approved and str(data.get("email") or "").strip().lower() == str(decided_by or "").strip().lower():
+            raise HTTPException(
+                status_code=403,
+                detail={"message": f"You cannot approve your own order {order_id}. "
+                                   "Please ask another staff member to review it."},
+            )
+        now = _now_iso()
+        new_status = STATUS_IN_PROGRESS if approved else STATUS_REJECTED
+        approval = {"decision": decision, "decided_by": decided_by, "channel": channel, "decided_at": now}
+        if reason:
+            approval["reason"] = reason
+        history = list(data.get("status_history") or [])
+        history.append({"status": new_status, "by": approval["decided_by"], "at": now})
+        update = {"status": new_status, "approval": approval, "status_history": history}
+        txn.update(doc_ref, update)
+        return update
+
+    update = _apply(client.transaction())
+    approval = update["approval"]
+    logger.info(f"Order {order_id} {approval['decision']} via {approval['channel']}")
+    return {
+        "order_id": order_id,
+        "status": update["status"],
+        "decision": approval["decision"],
+        "decided_by": approval["decided_by"],
+        "channel": approval["channel"],
+    }
+
 
 def get_firestore_client() -> firestore.Client:
     global db
@@ -179,9 +385,11 @@ def init_database():
         if len(list(orders_ref.limit(1).stream())) == 0:
             logger.info(f"Seeding sample coffee orders into {ORDERS_COLLECTION}...")
             batch = client.batch()
+            seeded_at = datetime.now(timezone.utc)
             for order in SEED_ORDERS:
                 doc_ref = orders_ref.document(order["order_id"])
-                batch.set(doc_ref, order)
+                age = SEED_ORDER_AGE_MINUTES.get(order["order_id"], 60)
+                batch.set(doc_ref, {**order, "created_at": (seeded_at - timedelta(minutes=age)).isoformat()})
             batch.commit()
 
         logger.info("Firestore initialization and seeding check completed.")
@@ -195,32 +403,52 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Biscuit Coffee Shop Backend", lifespan=lifespan)
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# No CORS middleware: this service is called server-to-server only (Apigee
+# with a Google ID token), never from a browser. The old allow_origins=["*"]
+# with allow_credentials=True was both unnecessary and unsafe.
+
+# Customer requests (placeOrder, signUpLoyalty) reach this service through the
+# agent, so a bad body gets 400 with a sentence the agent can relay
+# ("quantity: Input should be less than or equal to 50") instead of FastAPI's
+# 422 dump. Other routes keep the standard 422.
+CUSTOMER_BODY_ROUTES = {("POST", "/orders"), ("POST", "/loyalty/signup")}
+
+
+@app.exception_handler(RequestValidationError)
+async def _validation_error(request: Request, exc: RequestValidationError):
+    if (request.method, request.url.path) not in CUSTOMER_BODY_ROUTES:
+        return await request_validation_exception_handler(request, exc)
+    problems = []
+    for err in exc.errors()[:5]:
+        where = ".".join(str(p) for p in err.get("loc", ()) if p != "body") or "request"
+        problems.append(f"{where}: {err.get('msg', 'invalid value')}")
+    return JSONResponse(
+        status_code=400,
+        content=jsonable_encoder({"detail": {"message": "Invalid request - " + "; ".join(problems)}}),
+    )
 
 # Models
 class OrderItem(BaseModel):
-    item_id: str
-    quantity: int
+    item_id: str = Field(..., pattern=ID_PATTERN)
+    quantity: int = Field(..., ge=1, le=50)
 
 class PlaceOrderRequest(BaseModel):
-    items: List[OrderItem]
-    email: Optional[str] = None
-    name: Optional[str] = None
+    items: List[OrderItem] = Field(..., min_length=1, max_length=20)
+    # Accepted for older clients but IGNORED: the order's email and name always
+    # come from the verified token (a caller cannot order as someone else).
+    email: Optional[str] = Field(None, max_length=254)
+    name: Optional[str] = Field(None, max_length=80)
 
 class SignUpLoyaltyRequest(BaseModel):
-    email: str
-    name: str
-    phone: Optional[str] = None
+    # email is optional: customers are always enrolled under their verified
+    # token email; only a store manager may enrol another address.
+    email: Optional[str] = Field(None, max_length=254, pattern=EMAIL_PATTERN)
+    name: Optional[str] = Field(None, max_length=80, pattern=NAME_PATTERN)
+    phone: Optional[str] = Field(None, pattern=PHONE_PATTERN)
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "project": PROJECT_ID, "database": DATABASE_ID}
+    return {"status": "ok"}
 
 @app.get("/")
 def root():
@@ -248,13 +476,20 @@ def get_menu():
     client = get_firestore_client()
     items = []
     for doc in client.collection("menu").stream():
-        items.append(doc.to_dict())
+        item = doc.to_dict()
+        # Public route: drop the audit fields a manager edit adds (manager email).
+        item.pop("updated_by", None)
+        item.pop("updated_at", None)
+        # available=false means sold out (set by a manager via updateMenuItem).
+        item["available"] = item.get("available", True) is not False
+        items.append(item)
     if not items:
-        return SEED_MENU
+        return [{**item, "available": True} for item in SEED_MENU]
     return items
 
 @app.get("/employees")
-def list_employees():
+def list_employees(principal: Principal = Depends(current_principal)):
+    require_manager(principal)
     client = get_firestore_client()
     employees = []
     for doc in client.collection("employees").stream():
@@ -265,94 +500,157 @@ def list_employees():
 
 @app.get("/orders")
 def list_orders(
-    filter: Optional[str] = Query(None, description="Format 'key:value' e.g. email:customer@example.com"),
-    email: Optional[str] = Query(None),
-    name: Optional[str] = Query(None),
-    loyalty_id: Optional[str] = Query(None),
-    x_user_email: Optional[str] = Header(None, alias="X-User-Email"),
-    x_user_scope: Optional[str] = Header(None, alias="X-User-Scope")
+    filter: Optional[str] = Query(None, max_length=250, description="Format 'key:value' e.g. email:customer@example.com"),
+    email: Optional[str] = Query(None, max_length=254),
+    name: Optional[str] = Query(None, max_length=80),
+    loyalty_id: Optional[str] = Query(None, max_length=40),
+    principal: Principal = Depends(current_principal),
 ):
+    """Managers may filter across customers; everyone else sees only their own orders."""
     client = get_firestore_client()
     orders_ref = client.collection(ORDERS_COLLECTION)
-    
+
     filter_key = None
     filter_val = None
-    if filter and ":" in filter:
-        parts = filter.split(":", 1)
-        filter_key = parts[0].strip()
-        filter_val = parts[1].strip()
-    elif email:
-        filter_key = "email"
-        filter_val = email.strip()
-    elif name:
-        filter_key = "name"
-        filter_val = name.strip()
-    elif loyalty_id:
-        filter_key = "loyalty_id"
-        filter_val = loyalty_id.strip()
-    elif x_user_email and (not x_user_scope or "biscuit_coffee_manager" not in x_user_scope):
-        filter_key = "email"
-        filter_val = x_user_email.strip()
-
-    orders = []
-    if filter_key and filter_val:
-        query = orders_ref.where(filter_key, "==", filter_val)
-        for doc in query.stream():
-            orders.append(doc.to_dict())
+    # is_manager is an exact match on one space-separated scope token
+    # (auth.Principal.scopes is a set), never a substring test.
+    if principal.is_manager:
+        if filter:
+            key, sep, val = filter.partition(":")
+            filter_key, filter_val = key.strip(), val.strip()
+            # Validated here, before anything reaches Firestore's where().
+            if not sep or filter_key not in ORDER_FILTER_KEYS or not filter_val:
+                raise HTTPException(status_code=400, detail={
+                    "message": "Use filter=key:value. Supported keys: email, name, loyalty_id, status."})
+            if filter_key == "email":
+                filter_val = filter_val.lower()
+            elif filter_key == "status":
+                filter_val = filter_val.upper()
+        elif email:
+            filter_key, filter_val = "email", email.strip().lower()
+        elif name:
+            filter_key, filter_val = "name", name.strip()
+        elif loyalty_id:
+            filter_key, filter_val = "loyalty_id", loyalty_id.strip()
     else:
-        for doc in orders_ref.stream():
-            orders.append(doc.to_dict())
+        # Any caller-supplied filter is ignored: the list is pinned to the
+        # verified email (the gateway pins it too, see AM-PinOrderFilter).
+        filter_key, filter_val = "email", _caller_email(principal)
 
-    # Fallback to seed if empty
-    if not orders and not filter_key:
-        return SEED_ORDERS
-    return orders
+    if filter_key and filter_val:
+        docs = orders_ref.where(filter_key, "==", filter_val).stream()
+    else:
+        docs = orders_ref.stream()
+    # No seed fallback: an empty collection is an empty list. (Sample orders
+    # are written to Firestore once by init_database, never invented per call.)
+    return [order_view_for(principal, doc.to_dict() or {}) for doc in docs]
+
+
+def _price_list(client) -> dict:
+    """item id -> menu entry (Firestore menu, or the seed menu if it is empty)."""
+    items = {}
+    for doc in client.collection("menu").stream():
+        data = doc.to_dict() or {}
+        if data.get("id"):
+            items[data["id"]] = data
+    return items or {item["id"]: item for item in SEED_MENU}
+
+
+def _new_order_id(client, order_data: dict) -> str:
+    """Write the order under a fresh 5-digit id; never overwrite an existing order.
+
+    create() fails if the document already exists, so a collision just draws
+    another id (up to ORDER_ID_ATTEMPTS times).
+    """
+    for _ in range(ORDER_ID_ATTEMPTS):
+        order_id = str(random.randint(10000, 99999))
+        try:
+            client.collection(ORDERS_COLLECTION).document(order_id).create({**order_data, "order_id": order_id})
+            return order_id
+        except gcp_exceptions.AlreadyExists:
+            logger.warning(f"Order id {order_id} already taken, drawing another")
+    raise HTTPException(status_code=503, detail={"message": "Could not allocate an order number, please try again"})
+
 
 @app.post("/orders")
 def place_order(
     order_req: PlaceOrderRequest,
-    x_user_email: Optional[str] = Header(None, alias="X-User-Email"),
-    x_user_name: Optional[str] = Header(None, alias="X-User-Name")
+    principal: Principal = Depends(current_principal),
+    x_order_status: Optional[str] = Header(None, alias="X-Order-Status")
 ):
+    if not principal.is_customer:
+        raise HTTPException(status_code=403, detail={"message": "Customer access required"})
+    # Identity comes only from the verified token; body email/name are ignored.
+    customer_email = _caller_email(principal)
+    customer_name = principal.name or "Valued Customer"
+
     client = get_firestore_client()
-    order_id = str(random.randint(10000, 99999))
-    
-    # Calculate total
-    total_amount = 0.0
-    menu_dict = {}
-    for doc in client.collection("menu").stream():
-        data = doc.to_dict()
-        menu_dict[data.get("id")] = data.get("price", 3.50)
+    menu_items = _price_list(client)
 
+    unknown = sorted({item.item_id for item in order_req.items if item.item_id not in menu_items})
+    if unknown:
+        raise HTTPException(
+            status_code=400,
+            detail={"message": "Sorry, these items are not on the menu: " + ", ".join(unknown)
+                    + ". Please choose something from the menu."},
+        )
+
+    sold_out = []
     for item in order_req.items:
-        price = menu_dict.get(item.item_id, 3.50)
-        total_amount += price * item.quantity
+        entry = menu_items[item.item_id]
+        if entry.get("available", True) is False:
+            label = " ".join(str(p) for p in (entry.get("size"), entry.get("name")) if p) or item.item_id
+            sold_out.append(f"{label} ({item.item_id})")
+    if sold_out:
+        raise HTTPException(
+            status_code=400,
+            detail={"message": "Sorry, sold out right now: " + ", ".join(sold_out)
+                    + ". Please choose something else from the menu."},
+        )
 
-    total_amount = round(total_amount, 2)
+    # Calculate total (integer cents, so the stored figure has no float drift).
+    total_cents = 0
+    for item in order_req.items:
+        total_cents += round(float(menu_items[item.item_id].get("price") or 0) * 100) * item.quantity
+    total_amount = round(total_cents / 100, 2)
 
-    customer_email = order_req.email or x_user_email or "customer@example.com"
-    customer_name = order_req.name or x_user_name or "Valued Customer"
+    # Order value rules (defence in depth; the gateway applies them first).
+    # Same body and status as the gateway's RF-Order-Limit-Exceeded, so the
+    # agent sees one message whichever layer refuses the order.
+    if total_cents >= ORDER_CAP_CENTS:
+        logger.info(f"Order refused: total {total_cents}c >= cap {ORDER_CAP_CENTS}c")
+        return JSONResponse(status_code=422, content={
+            "error": "order_limit_exceeded",
+            "message": f"This order comes to ${total_cents / 100:.2f}, and online orders must be under "
+                       f"${_money_display(ORDER_CAP_CENTS)}. Please visit the shop to place a large order "
+                       "with our staff.",
+        })
 
     # Check loyalty id
     loyalty_id = None
-    if customer_email:
-        acc_doc = client.collection("loyalty_accounts").document(customer_email.lower()).get()
-        if acc_doc.exists:
-            loyalty_id = acc_doc.to_dict().get("loyalty_id")
+    acc_doc = client.collection("loyalty_accounts").document(customer_email).get()
+    if acc_doc.exists:
+        loyalty_id = acc_doc.to_dict().get("loyalty_id")
+
+    requested_status = (x_order_status or "").strip().upper()
+    status = requested_status if requested_status in ACCEPTED_INITIAL_STATUSES else STATUS_IN_PROGRESS
+    if total_cents >= APPROVAL_THRESHOLD_CENTS:
+        # Needs staff approval even if the X-Order-Status header is missing.
+        status = STATUS_PENDING_APPROVAL
 
     order_data = {
-        "order_id": order_id,
         "email": customer_email,
         "name": customer_name,
-        "loyalty_id": loyalty_id or "L-12345",
-        "items": [item.model_dump() if hasattr(item, "model_dump") else item.dict() for item in order_req.items],
-        "status": "IN_PROGRESS",
+        "loyalty_id": loyalty_id,  # None if not a member (was a seed customer's id)
+        "items": [item.model_dump() for item in order_req.items],
+        "status": status,
         "eta_minutes": random.randint(5, 9),
-        "total_amount": total_amount
+        "total_amount": total_amount,
+        "created_at": _now_iso(),
     }
 
-    client.collection(ORDERS_COLLECTION).document(order_id).set(order_data)
-    logger.info(f"Order placed: {order_id}")
+    order_id = _new_order_id(client, order_data)
+    logger.info(f"Order placed: {order_id} ({status})")
     # total_amount is returned so the API gateway can quote the price back to the
     # customer. It is the same figure written to Firestore above, which keeps the
     # confirmation the customer sees in step with the order actually recorded.
@@ -360,31 +658,70 @@ def place_order(
         "order_id": order_id,
         "message": "Order successfully placed",
         "total_amount": total_amount,
+        "status": status,
     }
 
 @app.get("/orders/{order_id}")
-def get_order(order_id: str):
+def get_order(
+    order_id: str = Path(..., pattern=ID_PATTERN),
+    principal: Principal = Depends(current_principal),
+):
     client = get_firestore_client()
     doc = client.collection(ORDERS_COLLECTION).document(order_id).get()
-    if not doc.exists:
-        raise HTTPException(status_code=404, detail={"message": f"Order {order_id} not found"})
-    return doc.to_dict()
+    # Same 404 for "missing" and "not yours", so order ids cannot be probed.
+    if not doc.exists or not _can_see_order(principal, doc.to_dict() or {}):
+        raise _order_not_found(order_id)
+    return order_view_for(principal, doc.to_dict() or {})
 
 @app.delete("/orders/{order_id}")
-def cancel_order(order_id: str):
+def cancel_order(
+    order_id: str = Path(..., pattern=ID_PATTERN),
+    principal: Principal = Depends(current_principal),
+):
     client = get_firestore_client()
     doc_ref = client.collection(ORDERS_COLLECTION).document(order_id)
     doc = doc_ref.get()
     if not doc.exists:
         # Still return success or 404
         return {"message": "Order has been cancelled successfully"}
+    if not _can_see_order(principal, doc.to_dict() or {}):
+        raise _order_not_found(order_id)
     doc_ref.delete()
     return {"message": "Order has been cancelled successfully"}
 
+
+OWN_LOYALTY_ONLY = "You can only use the rewards account for your own email address."
+NOT_A_MEMBER_SELF = (
+    "You're not a Biscuit Coffee rewards member yet. Sign up for rewards to start earning points."
+)
+NOT_A_MEMBER_OTHER = "{email} is not a Biscuit Coffee rewards member yet."
+
+
+def _loyalty_email(principal: Principal, requested: Optional[str], staff_may_choose: bool) -> str:
+    """Email whose loyalty account is used.
+
+    Customers are bound to their verified token email: naming any other address
+    -> 403 (not silently swapped, so the agent never reports someone else's
+    balance as theirs or vice versa). Staff (or managers, for signup) may name
+    another email.
+    """
+    wanted = (requested or "").strip().lower()
+    if wanted and not re.match(EMAIL_PATTERN, wanted):
+        raise HTTPException(status_code=400, detail={"message": "Please give a valid email address."})
+    if wanted and staff_may_choose:
+        return wanted
+    own = _caller_email(principal)
+    if wanted and wanted != own:
+        raise HTTPException(status_code=403, detail={"message": OWN_LOYALTY_ONLY})
+    return own
+
+
 @app.post("/loyalty/signup")
-def signup_loyalty(req: SignUpLoyaltyRequest):
+def signup_loyalty(req: SignUpLoyaltyRequest, principal: Principal = Depends(current_principal)):
+    email = _loyalty_email(principal, req.email, staff_may_choose=principal.is_manager)
+    name = (req.name or "").strip() or principal.name or "Valued Customer"
     client = get_firestore_client()
-    doc_ref = client.collection("loyalty_accounts").document(req.email.lower())
+    doc_ref = client.collection("loyalty_accounts").document(email)
     existing = doc_ref.get()
     if existing.exists:
         loyalty_id = existing.to_dict().get("loyalty_id")
@@ -392,13 +729,16 @@ def signup_loyalty(req: SignUpLoyaltyRequest):
         loyalty_id = f"L-{random.randint(10000, 99999)}"
         acc_data = {
             "loyalty_id": loyalty_id,
-            "email": req.email,
-            "name": req.name,
-            "phone": req.phone or "",
+            "email": email,
+            "name": name,
+            "phone": (req.phone or "").strip(),
             "points": 100
         }
-        doc_ref.set(acc_data)
-        logger.info(f"Created loyalty account for {req.email}: {loyalty_id}")
+        try:
+            doc_ref.create(acc_data)  # never overwrite an account created meanwhile
+            logger.info(f"Created loyalty account {loyalty_id}")
+        except gcp_exceptions.AlreadyExists:
+            loyalty_id = (doc_ref.get().to_dict() or {}).get("loyalty_id")
 
     return {
         "loyalty_id": loyalty_id,
@@ -406,13 +746,290 @@ def signup_loyalty(req: SignUpLoyaltyRequest):
     }
 
 @app.get("/loyalty/balance")
-def get_loyalty_balance(email: str = Query(..., description="The user's email address")):
+def get_loyalty_balance(
+    email: Optional[str] = Query(None, max_length=254, description="The user's email address (customers: must be their own)"),
+    principal: Principal = Depends(current_principal),
+):
     client = get_firestore_client()
-    doc = client.collection("loyalty_accounts").document(email.lower()).get()
-    if doc.exists:
-        return {"points": doc.to_dict().get("points", 150)}
-    return {"points": 150}
+    member_email = _loyalty_email(principal, email, staff_may_choose=principal.is_staff)
+    doc = client.collection("loyalty_accounts").document(member_email).get()
+    if not doc.exists:
+        # No invented balance: a non-member is told how to join (customers) or
+        # that the address has no account (staff looking someone up).
+        own = member_email == _caller_email(principal)
+        message = NOT_A_MEMBER_SELF if own else NOT_A_MEMBER_OTHER.format(email=member_email)
+        raise HTTPException(status_code=404, detail={"error": "not_a_member", "message": message})
+    return {"points": (doc.to_dict() or {}).get("points", 0)}
 
 @app.get("/rewards/{email}")
-def get_rewards(email: str):
-    return get_loyalty_balance(email=email)
+def get_rewards(email: str = Path(..., max_length=254), principal: Principal = Depends(current_principal)):
+    return get_loyalty_balance(email=email, principal=principal)
+
+
+# =============================================================================
+# Staff app (/staff/*). Reached only through the Biscuit-Coffee-Shop proxy,
+# which checks the scope per operation; the require_* calls repeat the check
+# against the verified token.
+# =============================================================================
+class StaffStatusRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    status: Literal["IN_PROGRESS", "READY", "COMPLETED", "CANCELLED"]
+    # Optional optimistic-concurrency check: 409 if the order is no longer in
+    # this status (e.g. someone else moved it since the board was loaded).
+    expected_status: Optional[OrderStatus] = None
+
+
+class StaffDecisionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    decision: Literal["APPROVE", "REJECT"]
+    reason: Optional[str] = Field(None, max_length=500)
+    expected_status: Optional[OrderStatus] = None
+
+
+class StoreHoursRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    day: str = Field(..., min_length=3, max_length=12)
+    open: Optional[str] = None
+    close: Optional[str] = None
+    closed: bool = False
+
+
+class MenuItemPatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    price: Optional[float] = Field(None, gt=0, le=100)
+    name: Optional[str] = Field(None, min_length=1, max_length=60)
+    available: Optional[bool] = None
+
+
+def _order_sort_key(order: dict):
+    return (str(order.get("created_at") or ""), str(order.get("order_id") or ""))
+
+
+@app.get("/staff/orders")
+def staff_list_orders(
+    status: Optional[str] = Query(None, max_length=20, description="Order status, e.g. PENDING_APPROVAL"),
+    customer: Optional[str] = Query(None, max_length=120, description="Customer email (exact) or name (contains)"),
+    limit: int = Query(50, ge=1, le=200),
+    principal: Principal = Depends(current_principal),
+):
+    require_staff(principal)
+    client = get_firestore_client()
+    orders = [doc.to_dict() for doc in client.collection(ORDERS_COLLECTION).stream()]
+    if status:
+        wanted = status.strip().upper()
+        orders = [o for o in orders if str(o.get("status", "")).upper() == wanted]
+    if customer:
+        needle = customer.strip().lower()
+        orders = [o for o in orders
+                  if str(o.get("email", "")).lower() == needle or needle in str(o.get("name", "")).lower()]
+    orders.sort(key=_order_sort_key, reverse=True)
+    return orders[:limit]
+
+
+@app.get("/staff/orders/{order_id}")
+def staff_get_order(
+    order_id: str = Path(..., pattern=ID_PATTERN),
+    principal: Principal = Depends(current_principal),
+):
+    require_staff(principal)
+    doc = get_firestore_client().collection(ORDERS_COLLECTION).document(order_id).get()
+    if not doc.exists:
+        raise HTTPException(status_code=404, detail={"message": f"Order {order_id} not found"})
+    return doc.to_dict()
+
+
+@app.post("/staff/orders/{order_id}/status")
+def staff_update_order_status(
+    body: StaffStatusRequest,
+    order_id: str = Path(..., pattern=ID_PATTERN),
+    principal: Principal = Depends(current_principal),
+):
+    require_staff(principal)
+    actor = _caller_email(principal)
+    client = get_firestore_client()
+    doc_ref = client.collection(ORDERS_COLLECTION).document(order_id)
+
+    @firestore.transactional
+    def _apply(txn):
+        snap = doc_ref.get(transaction=txn)
+        if not snap.exists:
+            raise HTTPException(status_code=404, detail={"message": f"Order {order_id} not found"})
+        data = snap.to_dict() or {}
+        current = data.get("status")
+        if body.expected_status and current != body.expected_status:
+            raise HTTPException(
+                status_code=409,
+                detail={"message": f"Order {order_id} changed: it is now {current}, not {body.expected_status}"},
+            )
+        if current in DECISION_ONLY_STATUSES:
+            raise HTTPException(
+                status_code=409,
+                detail={"message": f"Order {order_id} is {current}; use decideOrder for orders waiting for "
+                                   "approval, and rejected orders cannot be changed"},
+            )
+        if body.status not in ALLOWED_TRANSITIONS.get(current, set()):
+            allowed = sorted(ALLOWED_TRANSITIONS.get(current, set()))
+            raise HTTPException(
+                status_code=409,
+                detail={"message": f"Order {order_id} cannot go from {current} to {body.status}"
+                                   + (f" (allowed: {', '.join(allowed)})" if allowed else "")},
+            )
+        now = _now_iso()
+        history = list(data.get("status_history") or [])
+        history.append({"status": body.status, "by": actor, "at": now})
+        update = {"status": body.status, "status_history": history, "updated_at": now, "updated_by": actor}
+        txn.update(doc_ref, update)
+        return current
+
+    previous = _apply(client.transaction())
+    logger.info(f"Order {order_id} status {previous} -> {body.status} by staff")
+    return {"order_id": order_id, "previous_status": previous, "status": body.status, "updated_by": actor}
+
+
+@app.post("/staff/orders/{order_id}/decision")
+def staff_decide_order(
+    body: StaffDecisionRequest,
+    order_id: str = Path(..., pattern=ID_PATTERN),
+    principal: Principal = Depends(current_principal),
+):
+    """Approve or reject an order that is waiting for approval.
+
+    The decision is applied directly (Firestore transaction in decide_order), so
+    the response carries the final status. A second decision gets 409.
+    """
+    require_staff(principal)
+    actor = _caller_email(principal)
+    approved = body.decision == "APPROVE"
+    reason = (body.reason or "").strip() or None
+    return decide_order(order_id, approved, actor, "staff-ui", reason, body.expected_status)
+
+
+@app.get("/staff/employees/{employee_id}")
+def staff_get_employee(
+    employee_id: str = Path(..., pattern=ID_PATTERN),
+    principal: Principal = Depends(current_principal),
+):
+    require_manager(principal)
+    doc = get_firestore_client().collection("employees").document(employee_id).get()
+    data = doc.to_dict() if doc.exists else next((e for e in SEED_EMPLOYEES if e["id"] == employee_id), None)
+    if not data:
+        raise HTTPException(status_code=404, detail={"message": f"Employee {employee_id} not found"})
+    # Personal data: return only the directory fields.
+    return {k: data.get(k) for k in ("id", "name", "phone", "email")}
+
+
+def _to_12h(hhmm: str) -> str:
+    hour, minute = (int(p) for p in hhmm.split(":"))
+    suffix = "AM" if hour < 12 else "PM"
+    return f"{hour % 12 or 12}:{minute:02d} {suffix}"
+
+
+@app.put("/staff/store/hours")
+def staff_update_store_hours(
+    body: StoreHoursRequest,
+    principal: Principal = Depends(current_principal),
+):
+    require_manager(principal)
+    actor = _caller_email(principal)
+    day = next((d for d in DAYS if d.lower() == body.day.strip().lower()), None)
+    if not day:
+        raise HTTPException(status_code=400, detail={"message": "day must be one of " + ", ".join(DAYS)})
+    if body.closed:
+        if body.open or body.close:
+            raise HTTPException(status_code=400, detail={"message": "Send either closed=true or open/close, not both"})
+        entry = {"day": day, "closed": True, "hours": "Closed"}
+    else:
+        if not (body.open and body.close and HHMM.match(body.open) and HHMM.match(body.close)):
+            raise HTTPException(status_code=400, detail={"message": "open and close must be HH:MM (24-hour), e.g. 07:00"})
+        if body.close <= body.open:
+            raise HTTPException(status_code=400, detail={"message": "close must be later than open"})
+        entry = {"day": day, "open": body.open, "close": body.close,
+                 "hours": f"{_to_12h(body.open)} - {_to_12h(body.close)}"}
+
+    client = get_firestore_client()
+    doc_ref = client.collection("store_info").document("hours")
+
+    # Read-modify-write in one transaction: two managers changing different
+    # days at the same time must not overwrite each other's change.
+    @firestore.transactional
+    def _apply(txn):
+        snap = doc_ref.get(transaction=txn)
+        days = list((snap.to_dict() or {}).get("days") or SEED_HOURS) if snap.exists else [dict(d) for d in SEED_HOURS]
+        days = [d for d in days if d.get("day") != day] + [entry]
+        days.sort(key=lambda d: DAYS.index(d["day"]) if d.get("day") in DAYS else 99)
+        txn.set(doc_ref, {"days": days, "updated_at": _now_iso(), "updated_by": actor})
+        return days
+
+    days = _apply(client.transaction())
+    logger.info(f"Store hours for {day} updated by manager")
+    return {"updated": entry, "days": days}
+
+
+@app.patch("/staff/menu/{item_id}")
+def staff_update_menu_item(
+    body: MenuItemPatch,
+    item_id: str = Path(..., pattern=ID_PATTERN),
+    principal: Principal = Depends(current_principal),
+):
+    require_manager(principal)
+    actor = _caller_email(principal)
+    changes = body.model_dump(exclude_none=True)
+    if not changes:
+        raise HTTPException(status_code=400, detail={"message": "Send at least one of price, name, available"})
+    if "price" in changes:
+        changes["price"] = round(float(changes["price"]), 2)
+    if "name" in changes:
+        changes["name"] = changes["name"].strip()
+    doc_ref = get_firestore_client().collection("menu").document(item_id)
+    snap = doc_ref.get()
+    if not snap.exists:
+        raise HTTPException(status_code=404, detail={"message": f"Menu item {item_id} not found"})
+    doc_ref.update({**changes, "updated_at": _now_iso(), "updated_by": actor})
+    item = {**(snap.to_dict() or {}), **changes}
+    item["available"] = item.get("available", True) is not False
+    logger.info(f"Menu item {item_id} updated by manager: {sorted(changes)}")
+    return item
+
+
+@app.get("/staff/stats")
+def staff_sales_stats(
+    days: int = Query(7, ge=1, le=365),
+    principal: Principal = Depends(current_principal),
+):
+    require_manager(principal)
+    client = get_firestore_client()
+    since = datetime.now(timezone.utc) - timedelta(days=days)
+    all_orders = [doc.to_dict() for doc in client.collection(ORDERS_COLLECTION).stream()]
+    names = {}
+    for doc in client.collection("menu").stream():
+        m = doc.to_dict()
+        names[m.get("id")] = " ".join(str(p) for p in (m.get("size"), m.get("name")) if p)
+
+    in_window, undated = [], 0
+    for order in all_orders:
+        created = _parse_iso(order.get("created_at")) if order.get("created_at") else None
+        if created is None:
+            undated += 1
+        elif created >= since:
+            in_window.append(order)
+
+    by_status = Counter(str(o.get("status", "UNKNOWN")) for o in in_window)
+    not_revenue = {STATUS_REJECTED, STATUS_CANCELLED, STATUS_PENDING_APPROVAL}
+    revenue = sum(float(o.get("total_amount") or 0) for o in in_window if o.get("status") not in not_revenue)
+    items = Counter()
+    for o in in_window:
+        if o.get("status") in (STATUS_REJECTED, STATUS_CANCELLED):
+            continue
+        for it in o.get("items") or []:
+            items[it.get("item_id")] += int(it.get("quantity") or 0)
+    return {
+        "days": days,
+        "since": since.isoformat(),
+        "order_count": len(in_window),
+        "revenue": round(revenue, 2),
+        "average_order_value": round(revenue / max(1, sum(1 for o in in_window if o.get("status") not in not_revenue)), 2),
+        "by_status": dict(by_status),
+        "top_items": [{"item_id": i, "name": names.get(i, i), "quantity": q} for i, q in items.most_common(5)],
+        "pending_approval_count": sum(1 for o in all_orders if o.get("status") == STATUS_PENDING_APPROVAL),
+        "orders_without_timestamp": undated,
+    }

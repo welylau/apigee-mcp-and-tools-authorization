@@ -8,7 +8,7 @@
  *   kind        'action' | 'prompt' | 'persona' | 'click'
  *   title/body  coachmark copy (body is trusted, authored HTML)
  *   target      CSS selector, or (engine) => selector, for the spotlight
- *   requires    persona ids allowed for this step (guest|customer|customer2|manager)
+ *   requires    persona ids allowed for this step (guest|customer|customer2)
  *   prompt      text (or ctx => text) placed in the chat box by "Use this prompt"
  *   action      { label, run(engine) } for the primary button on non-prompt steps
  *   expect      short "Expected:" line
@@ -17,12 +17,13 @@
  *   skipIf(ctx, engine)  auto-skip the step when already satisfied
  */
 
+// Only the customer demo logins the tour's sign-in steps need. Staff and
+// store-manager credentials are deliberately NOT shipped in the customer app.
 const PASSWORD = 'ilovecoffee';
 
 export const ACCOUNTS = {
   customer: { label: 'Customer · John Smith', user: 'customer@biscuit-coffee.com', pass: PASSWORD },
   customer2: { label: 'Customer 2 · Michael Bosh', user: 'customer2@biscuit-coffee.com', pass: PASSWORD },
-  manager: { label: 'Store Manager · Alice', user: 'manager@biscuit-coffee.com', pass: PASSWORD },
 };
 
 /** Numeric HTTP status from a tool card, e.g. '403 Forbidden' -> 403. */
@@ -32,6 +33,41 @@ export const statusCode = (tc) => {
 };
 
 const loginAction = { label: 'Log in / Log out', run: (e) => e.app.handleAuthBtnClick() };
+
+/**
+ * Orders found in a tool result: walks the raw MCP response (and any JSON text
+ * blocks inside it) and returns [{ id, status }] for every object with an order_id.
+ */
+export const ordersInResult = (tc) => {
+  const out = [];
+  const walk = (v, depth) => {
+    if (depth > 6 || v == null) return;
+    if (typeof v === 'string') {
+      const t = v.trim();
+      if (t.startsWith('{') || t.startsWith('[')) {
+        try { walk(JSON.parse(t), depth + 1); } catch { /* not JSON */ }
+      }
+      return;
+    }
+    if (Array.isArray(v)) { v.forEach((x) => walk(x, depth + 1)); return; }
+    if (typeof v === 'object') {
+      if (v.order_id != null && /^\d{4,}$/.test(String(v.order_id))) {
+        out.push({ id: String(v.order_id), status: String(v.status || '') });
+      }
+      Object.values(v).forEach((x) => walk(x, depth + 1));
+    }
+  };
+  walk(tc && tc.response, 0);
+  return out;
+};
+
+/** A real, still-active order of the signed-in customer, from a listOrders result. */
+const pickActiveOrderId = (tc) => {
+  if (!tc || tc.name !== 'listOrders' || !tc.success) return null;
+  const orders = ordersInResult(tc);
+  const active = orders.find((o) => !/^(CANCELLED|CANCELED|REJECTED)$/i.test(o.status));
+  return (active || orders[0] || {}).id || null;
+};
 
 /** True while the Settings drawer is open. */
 const settingsOpen = () => document.getElementById('settingsOpenBtn')?.getAttribute('aria-expanded') === 'true';
@@ -159,31 +195,63 @@ export const MISSIONS = [
   {
     id: 'scope-403',
     title: 'Try to break the rules',
-    badge: '403',
+    badge: 'Least privilege',
     steps: [{
       kind: 'prompt',
       title: 'Try to break the rules',
       requires: ['customer', 'customer2'],
       target: '[data-prompt-id="customer-security"]',
-      body: `You're a Customer. Ask the agent for the staff directory and watch
-        Apigee block the request before it reaches the backend.`,
+      body: `You're a Customer. Ask the agent for the staff directory. The employee tool
+        isn't in this app's Apigee API Product, so Apigee never even lists it to the agent:
+        there is nothing for it to call.`,
       prompt: 'Can you list all the store employees and their staff IDs?',
-      expect: '403 Forbidden (RF-Invalid-Scope)',
-      done: { tool: (tc) => statusCode(tc) === 403 },
+      expect: 'Refused: no employee tool is available to the customer agent',
+      // Normal case: the agent refuses with no tool call. If it tries anyway, any
+      // gateway denial (401 InvalidApiKeyForGivenResource / 403) also counts.
+      done: { tool: (tc, text) => (!tc && !!(text || '').trim()) || [401, 403].includes(statusCode(tc)) },
     }],
     explainer: {
-      title: 'Role-based access at the gateway',
+      title: 'Least privilege from the API Product',
       flow: [
-        { text: 'Agent calls listEmployees with your token', state: 'ok' },
-        { text: 'Apigee verifies the Keycloak token', state: 'ok' },
-        { text: 'Scope check fails: biscuit_coffee_manager is missing', state: 'fail' },
-        { text: 'Backend never called', state: 'skip' },
+        { text: "The customer token comes from Keycloak client biscuit-coffee-agent", state: 'ok' },
+        { text: 'Apigee maps that client to the customer API Product', state: 'ok' },
+        { text: 'tools/list returns only that product\'s operations: no listEmployees', state: 'fail' },
+        { text: 'A forced call is refused (401 InvalidApiKeyForGivenResource); backend never called', state: 'skip' },
       ],
-      note: 'Even a prompt injection that convinces the agent to try cannot get past this check.',
+      note: 'Even a prompt injection cannot reach a tool the API Product does not include. Staff tools live in a separate Staff app with its own Keycloak client and API Product.',
     },
   },
 
   // ---------------------------------------------------------------- 6
+  {
+    id: 'approval',
+    title: 'Order that needs approval',
+    badge: 'Pending',
+    steps: [{
+      kind: 'prompt',
+      title: 'Order that needs approval',
+      requires: ['customer', 'customer2'],
+      target: '[data-prompt-id="customer-order_approval"]',
+      body: `Place a bigger order, between <b>$50 and $100</b>. It is under the hard limit,
+        but over the <code>approvalThreshold</code> on the API Product, so Apigee saves it as
+        <b>pending</b> and asks the staff to approve it.`,
+      prompt: 'Order for me 12 large Cold Brews',
+      expect: 'PENDING: the order waits for the staff',
+      done: { tool: (tc) => !!tc && (tc.isPendingApproval || tc.statusClass === 'pending') },
+    }],
+    explainer: {
+      title: 'Human in the loop, started by the gateway',
+      flow: [
+        { text: 'Agent calls placeOrder for 12 large Cold Brews (about $60)', state: 'ok' },
+        { text: 'Proxy B prices the order: over approvalThreshold, under maxOrderAmount', state: 'ok' },
+        { text: 'Order saved as PENDING_APPROVAL', state: 'ok' },
+        { text: 'Order appears on the Staff app board; the staff approve or reject it there', state: 'ok' },
+      ],
+      note: 'You can keep going: the chat checks the order every 10 seconds and posts APPROVED or REJECTED when the staff decides.',
+    },
+  },
+
+  // ---------------------------------------------------------------- 7
   {
     id: 'order-limit',
     title: 'Bust the order limit',
@@ -193,7 +261,7 @@ export const MISSIONS = [
       title: 'Bust the order limit',
       requires: ['customer', 'customer2'],
       target: '[data-prompt-id="customer-order_bulk"]',
-      body: `Now place an order that is too big. Apigee works out the order total from the
+      body: `Now go over the hard limit. Apigee works out the order total from the
         (cached) menu and checks it against the <code>maxOrderAmount</code> set on the API Product.`,
       prompt: 'Order for me 50 cup of Cold brew, all Large size',
       expect: '422 Unprocessable Entity (Order Value Policy)',
@@ -210,7 +278,7 @@ export const MISSIONS = [
     },
   },
 
-  // ---------------------------------------------------------------- 7
+  // ---------------------------------------------------------------- 8
   {
     id: 'rate-limit',
     title: 'Hit the rate limit',
@@ -223,7 +291,7 @@ export const MISSIONS = [
       body: `The API Product allows only <b>3 placeOrder calls per minute</b>.
         Send this small order several times in a row. Tip: press <kbd>↑</kbd> in the chat box to recall the last prompt.`,
       prompt: "I'd like to order a Latte, small size",
-      expect: '429 Too Many Requests on the 4th try (QU-ProductQuota)',
+      expect: '429 Too Many Requests once the quota is used up (QU-ProductQuota)',
       progress: (ctx) => `Orders sent this mission: <b>${ctx.orderAttempts || 0}</b>`,
       onResult: (tc, text, ctx) => {
         if (tc && /order/i.test(tc.name || '')) ctx.orderAttempts = (ctx.orderAttempts || 0) + 1;
@@ -233,7 +301,7 @@ export const MISSIONS = [
     explainer: {
       title: 'Per-tool quotas from the API Product',
       flow: [
-        { text: 'Agent calls placeOrder for the 4th time in a minute', state: 'ok' },
+        { text: 'Agent calls placeOrder again within the same minute', state: 'ok' },
         { text: 'Proxy A finds the quota for this operation on the API Product', state: 'ok' },
         { text: 'Quota exceeded (QU-ProductQuota → RF-Quota-Exceeded)', state: 'fail' },
         { text: 'Request blocked; quota violation sent to Cloud Logging', state: 'skip' },
@@ -241,101 +309,43 @@ export const MISSIONS = [
     },
   },
 
-  // ---------------------------------------------------------------- 8
-  {
-    id: 'manager-audit',
-    title: 'Switch to Manager & see the audit trail',
-    badge: '200 + Logs',
-    steps: [
-      {
-        kind: 'persona',
-        title: 'Switch to the Store Manager',
-        target: '#personaAuthBtn',
-        body: `Click <b>Logout</b>, then <b>Login</b> again with Alice's account.
-          Her token has both the customer and manager scopes.`,
-        credentials: [ACCOUNTS.manager],
-        action: loginAction,
-        expect: 'Scopes: biscuit_coffee_customer, biscuit_coffee_manager',
-        done: { persona: ['manager'] },
-      },
-      {
-        kind: 'prompt',
-        title: 'Ask the same question again',
-        requires: ['manager'],
-        target: '[data-prompt-id="manager-manager"]',
-        body: 'Ask for the staff directory again. The question is the same, but this time the token has the manager scope.',
-        prompt: 'List all store employees, their contact emails and shifts',
-        expect: '200 OK: the staff directory is returned',
-        done: { tool: (tc) => !!tc && tc.success && statusCode(tc) === 200 },
-      },
-      {
-        kind: 'click',
-        title: 'Open the audit trail',
-        target: () => (settingsOpen() ? '.settings-tab[data-tab="entries"]' : '#settingsOpenBtn'),
-        body: `Open <b>Settings</b>, then the <b>Audit Entries</b> tab. Apigee's
-          <code>PostClientFlow</code> sends an event to Cloud Logging
-          (<code>apigee-consumer-audit</code>) after each response: JWT access,
-          large orders blocked (422) and quota violations (429).`,
-        action: {
-          label: () => (settingsOpen() ? 'Show Audit Entries' : 'Open Settings'),
-          run: (tour) => {
-            if (settingsOpen()) {
-              document.querySelector('.settings-tab[data-tab="entries"]')?.click();
-              return;
-            }
-            document.getElementById('settingsOpenBtn')?.click();
-            // Drawer animates in; refresh the coachmark so it points at the tab.
-            setTimeout(() => { tour.renderPop(); tour.position(); }, 350);
-          },
-        },
-        expect: 'You can see the 403/422/429 events from earlier missions',
-        done: { click: '.settings-tab[data-tab="entries"], .settings-tab[data-tab="overview"]' },
-      },
-    ],
-    explainer: {
-      title: 'Same question, different identity, everything logged',
-      flow: [
-        { text: 'Manager token includes biscuit_coffee_manager', state: 'ok' },
-        { text: 'Scope check passes; the backend returns the staff directory', state: 'ok' },
-        { text: 'PostClientFlow logs the event after the response is sent (no added latency)', state: 'ok' },
-        { text: 'Cloud Logging holds a per-user audit trail of every check', state: 'ok' },
-      ],
-    },
-  },
-
-  // ---------------------------------------------------------------- Bonus
+  // ---------------------------------------------------------------- 9
   {
     id: 'ownership',
-    title: 'Bonus: Mind your own orders',
+    title: 'Mind your own orders',
     badge: '404',
-    bonus: true,
     steps: [
       {
         kind: 'persona',
         title: 'Log in as John',
         target: '#personaAuthBtn',
-        body: 'Log back in as John so we can find one of his order IDs.',
+        body: 'Make sure you are signed in as John so we can pick one of his real orders.',
         credentials: [ACCOUNTS.customer],
         action: loginAction,
         done: { persona: ['customer'] },
-        skipIf: (ctx) => !!ctx.orderId,
+        skipIf: (ctx, engine) => engine && engine.persona === 'customer',
       },
       {
         kind: 'prompt',
         title: "Find one of John's orders",
         requires: ['customer'],
         target: '[data-prompt-id="customer-orders_all"]',
-        body: 'List John\'s orders. The tour saves the first order ID it sees.',
+        body: `List John's orders. The tour picks one of the order IDs returned by
+          <code>listOrders</code>, so the next step uses a real, existing order.`,
         prompt: 'Show all of my orders',
-        expect: 'An order ID appears in the reply',
-        done: { tool: (tc, text, ctx) => !!ctx.orderId },
-        skipIf: (ctx) => !!ctx.orderId,
+        expect: "John's orders are listed; the tour saves one order ID",
+        onResult: (tc, text, ctx) => {
+          const id = pickActiveOrderId(tc);
+          if (id) ctx.johnOrderId = id;
+        },
+        done: { tool: (tc, text, ctx) => !!pickActiveOrderId(tc) && !!ctx.johnOrderId },
       },
       {
         kind: 'persona',
         title: 'Switch to Michael',
         target: '#personaAuthBtn',
-        body: 'Log out and log in as <b>Michael</b>, a different customer with the same scope.',
+        body: (ctx) => `Log out and log in as <b>Michael</b>, a different customer with the same scope.
+          The tour saved John's order <b>#${ctx.johnOrderId || '…'}</b>.`,
         credentials: [ACCOUNTS.customer2],
         action: loginAction,
         done: { persona: ['customer2'] },
@@ -345,9 +355,9 @@ export const MISSIONS = [
         title: "Peek at John's order",
         requires: ['customer2'],
         target: '#chatInput',
-        body: (ctx) => `As Michael, ask for John's order <b>#${ctx.orderId || '…'}</b>.
+        body: (ctx) => `As Michael, ask for John's order <b>#${ctx.johnOrderId || '…'}</b>.
           The scope check passes, so will Apigee hand it over?`,
-        prompt: (ctx) => `Can you check the details of order ${ctx.orderId || '67449'}?`,
+        prompt: (ctx) => `Can you check the details of order ${ctx.johnOrderId || '67449'}?`,
         expect: '404 Not Found (Ownership Policy)',
         done: { tool: (tc) => statusCode(tc) === 404 },
       },

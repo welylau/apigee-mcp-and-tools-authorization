@@ -7,11 +7,18 @@
         {
             "name": "enforceOrderOwnership",
             "value": "true"
+        },
+        {
+            "name": "maxOrderAmount",
+            "value": "100"
+        },
+        {
+            "name": "approvalThreshold",
+            "value": "50"
         }
     ],
     "payloadOperationGroup": {
         "operationConfigs": [
-
             {
                 "apiSource": "mcp-proxy-prod",
                 "operations": [
@@ -68,46 +75,13 @@
                     "limit": "3",
                     "interval": "1",
                     "timeUnit": "minute"
-                },
-                "attributes": [
-                    {
-                        "name": "maxOrderAmount",
-                        "value": "100"
-                    }
-                ]
+                }
             },
             {
                 "apiSource": "mcp-proxy-prod",
                 "operations": [
                     {
                         "operation": "tools/call/cancelOrder"
-                    }
-                ],
-                "quota": {}
-            },
-            {
-                "apiSource": "mcp-proxy-prod",
-                "operations": [
-                    {
-                        "operation": "tools/call/getPaymentMethods"
-                    }
-                ],
-                "quota": {}
-            },
-            {
-                "apiSource": "mcp-proxy-prod",
-                "operations": [
-                    {
-                        "operation": "tools/call/getPaymentMethodById"
-                    }
-                ],
-                "quota": {}
-            },
-            {
-                "apiSource": "mcp-proxy-prod",
-                "operations": [
-                    {
-                        "operation": "tools/call/addPaymentMethod"
                     }
                 ],
                 "quota": {}
@@ -135,15 +109,6 @@
                 "operations": [
                     {
                         "operation": "tools/call/getRewardBalance"
-                    }
-                ],
-                "quota": {}
-            },
-            {
-                "apiSource": "mcp-proxy-prod",
-                "operations": [
-                    {
-                        "operation": "tools/call/listEmployees"
                     }
                 ],
                 "quota": {}

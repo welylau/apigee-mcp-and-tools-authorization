@@ -2,23 +2,31 @@
 <!--
   Runs checkOrderValue.js to price the order and decide whether it breaches the cap.
 
-  THE LIMIT IS NOT CONFIGURED HERE ANY MORE.
-  It lives on the biscuit-coffee-agent API Product, as a `maxOrderAmount` custom
-  attribute on the tools/call/placeOrder operation (config/agent-product-ops.json),
-  right next to that operation's quota. mcp-proxy-prod reads it after VerifyAPIKey
-  and forwards it as the X-Max-Order-Amount header, which the script prefers.
+  THE LIMIT IS NOT CONFIGURED HERE.
+  It lives on the API Product that the caller's Keycloak client is bound to, as
+  the `maxOrderAmount` / `approvalThreshold` custom attributes
+  (config/agent-product-ops.json). This proxy resolves that product from the
+  VERIFIED JWT azp and reads it with AccessEntity (JS-ResolveProduct,
+  AE-ApiProduct, JS-ProductAttrs, cached 60s); inbound policy headers are
+  stripped and never read.
 
-  defaultMaxOrderAmount applies ONLY when that header is absent or unusable -
-  i.e. a direct REST caller that bypassed the MCP server, or a misconfigured
-  product. It is a fail-safe, not the knob you turn to change the policy.
+  defaultMaxOrderAmount / defaultApprovalThreshold apply ONLY when the product
+  does not carry the attribute. They are a fail-safe, not the knob you turn to
+  change the policy.
 
   defaultItemPrice mirrors the backend's fallback for unrecognised item ids
-  (coffee-shop-backend/main.py), keeping the two totals in agreement.
+  (coffee-shop-backend/main.py), keeping the two totals in agreement. It is
+  never used for a whole menu: if no menu is available the order gets a 503
+  (RF-Pricing-Unavailable).
 -->
 <Javascript continueOnError="false" enabled="true" timeLimit="200" name="JS-CheckOrderValue">
   <DisplayName>JS-CheckOrderValue</DisplayName>
   <Properties>
     <Property name="defaultMaxOrderAmount">100</Property>
+    <!-- Orders at or above this total (and below the cap) need staff approval.
+         Like defaultMaxOrderAmount, only used when the product has no
+         approvalThreshold attribute. -->
+    <Property name="defaultApprovalThreshold">50</Property>
     <Property name="defaultItemPrice">3.50</Property>
   </Properties>
   <ResourceURL>jsc://checkOrderValue.js</ResourceURL>

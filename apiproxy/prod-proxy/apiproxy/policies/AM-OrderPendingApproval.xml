@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!--
+  Human-in-the-loop order approval (decided by staff in the Staff app).
+
+  Runs in the target PreFlow, after AM-SetBackendHeaders has removed any
+  X-Order-Status the caller sent. Only reached when JS-CheckOrderValue decided
+  the order total is between the approval threshold and the cap.
+
+  The backend accepts exactly one value from this header (PENDING_APPROVAL) and
+  ignores anything else, so the order is either pending or normal.
+-->
+<AssignMessage continueOnError="false" enabled="true" name="AM-OrderPendingApproval">
+  <DisplayName>AM-OrderPendingApproval</DisplayName>
+  <Set>
+    <Headers>
+      <Header name="X-Order-Status">PENDING_APPROVAL</Header>
+    </Headers>
+  </Set>
+  <IgnoreUnresolvedVariables>true</IgnoreUnresolvedVariables>
+  <AssignTo createNew="false" transport="http" type="request"/>
+</AssignMessage>

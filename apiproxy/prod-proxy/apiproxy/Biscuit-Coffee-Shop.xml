@@ -6,6 +6,7 @@
         <Policy>AM-SetBackendHeaders</Policy>
         <Policy>EV-GetId</Policy>
         <Policy>JS-GetFilter</Policy>
+        <Policy>RF-Invalid-Filter</Policy>
         <Policy>JWT-VerifyToken</Policy>
         <Policy>RF-Invalid-Scope</Policy>
         <!-- Maximum order value enforcement -->
@@ -28,6 +29,7 @@
         <!-- Consumer / end-user audit logging -->
         <Policy>AM-AuditEndUser</Policy>
         <Policy>AM-AuditRoleCustomer</Policy>
+        <Policy>AM-AuditRoleStaff</Policy>
         <Policy>AM-AuditRoleManager</Policy>
         <Policy>AE-AuditApp</Policy>
         <Policy>AE-AuditDeveloper</Policy>
@@ -36,6 +38,33 @@
         <Policy>JS-AuditAttributes</Policy>
         <Policy>ML-AuditLargeOrder</Policy>
         <Policy>ML-AuditJwtAccess</Policy>
+        <!-- Human-in-the-loop order approval (staff decide in the Staff app) -->
+        <Policy>AM-OrderPendingApproval</Policy>
+        <Policy>ML-AuditApprovalRequired</Policy>
+        <!-- Catch-all for undeclared paths -->
+        <Policy>RF-Unknown-Resource</Policy>
+        <!-- Header trust: product resolved from the verified JWT azp -->
+        <Policy>AM-StripInboundPolicyHeaders</Policy>
+        <Policy>JS-ResolveProduct</Policy>
+        <Policy>RF-Client-Not-Allowed</Policy>
+        <Policy>LC-ProductAttrs</Policy>
+        <Policy>AE-ApiProduct</Policy>
+        <Policy>JS-ProductAttrs</Policy>
+        <Policy>PC-ProductAttrs</Policy>
+        <Policy>RF-Product-Unavailable</Policy>
+        <!-- Per-user limits -->
+        <Policy>SA-PerUser</Policy>
+        <Policy>RF-Too-Many-Requests</Policy>
+        <Policy>QU-PlaceOrderPerUser</Policy>
+        <Policy>RF-Order-Rate-Limited</Policy>
+        <!-- Pricing integrity -->
+        <Policy>RF-Pricing-Unavailable</Policy>
+        <Policy>IC-MenuCache</Policy>
+        <!-- Generic fault bodies (DefaultFaultRule / FaultRules) -->
+        <Policy>AM-Fault-Unauthorized</Policy>
+        <Policy>AM-Fault-OrderNotFound</Policy>
+        <Policy>AM-Fault-Upstream</Policy>
+        <Policy>AM-Fault-Generic</Policy>
     </Policies>
 
     <ProxyEndpoints>
@@ -51,7 +80,10 @@
 
         <Resource>jsc://formatOrderConfirmation.js</Resource>
         <Resource>jsc://auditAttributes.js</Resource>
+        <Resource>jsc://resolveProduct.js</Resource>
+        <Resource>jsc://productAttrs.js</Resource>
         <Resource>oas://openapi.yaml</Resource>
         <Resource>properties://idp-config.properties</Resource>
+        <Resource>properties://azp-products.properties</Resource>
     </Resources>
 </APIProxy>

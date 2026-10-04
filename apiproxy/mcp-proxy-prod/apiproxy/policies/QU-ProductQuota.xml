@@ -1,20 +1,21 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <!--
   Enforces the per-operation quota declared on the API Product matched by
-  VA-VerifyKey (3-legged OAuth flow: API key resolved from the JWT 'azp' claim).
+  VA-VerifyKey (signed-in path: API key = verified JWT azp).
 
   The MCP tool name is already available at this point because PP-ParseMCPTools
   runs earlier in the PreFlow, so Apigee can match the request to the
   'tools/call/<toolName>' operationConfig inside the API Product.
 
-  Example: 'tools/call/placeOrder' is capped at 5 requests / 1 minute in
+  Example: 'tools/call/placeOrder' is capped at 3 requests / 1 minute in
   config/agent-product-ops.json. Tools without an explicit product quota fall
   back to the generous DefaultConfig below so they are effectively unthrottled.
 -->
 <Quota continueOnError="false" enabled="true" name="QU-ProductQuota">
   <DisplayName>QU-ProductQuota</DisplayName>
-  <!-- Counter is tracked per developer app (biscuit-coffee-agent-app) -->
-  <Identifier ref="client_id"/>
+  <!-- Counter is tracked per signed-in user (verified JWT sub), so one
+       customer hitting the limit does not block every other customer. -->
+  <Identifier ref="jwt.JWT-VerifyToken.claim.subject"/>
   <UseQuotaConfigInAPIProduct stepName="VA-VerifyKey">
     <DefaultConfig>
       <Allow>10000</Allow>

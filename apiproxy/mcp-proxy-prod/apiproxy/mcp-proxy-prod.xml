@@ -6,18 +6,17 @@
   <BasePaths>/.well-known/oauth-protected-resource/mcp</BasePaths>
   <Policies>
     <Policy>CORS-Allow</Policy>
-    <Policy>EV-JsonRpcId</Policy>
-    <Policy>AM-JsonRpcIdDefault</Policy>
+    <Policy>JS-JsonRpcId</Policy>
     <Policy>PP-ParseMCPTools</Policy>
-    <Policy>JWT-Decode</Policy>
+    <Policy>JWT-VerifyToken</Policy>
+    <Policy>RF-Guest-Key-Not-Allowed</Policy>
+    <Policy>AM-Fault-McpUnauthorized</Policy>
     <Policy>VA-VerifyKey</Policy>
     <Policy>VA-VerifyKey-Header</Policy>
     <Policy>AM-Set200ForMCP</Policy>
     <Policy>QU-ProductQuota</Policy>
     <Policy>QU-ProductQuota-Header</Policy>
     <Policy>RF-Quota-Exceeded</Policy>
-    <Policy>AM-MaxOrderAmount</Policy>
-    <Policy>AM-OwnershipFlag</Policy>
     <!-- Consumer / end-user audit logging -->
     <Policy>EV-McpToolCall</Policy>
     <Policy>AM-AuditConsumerContext</Policy>
@@ -34,6 +33,8 @@
   <Resources>
     <Resource>oas://openapi.yaml</Resource>
     <Resource>jsc://auditAttributes.js</Resource>
+    <Resource>jsc://jsonRpcId.js</Resource>
+    <Resource>properties://idp-config.properties</Resource>
   </Resources>
   <TargetEndpoints>
     <TargetEndpoint>default</TargetEndpoint>

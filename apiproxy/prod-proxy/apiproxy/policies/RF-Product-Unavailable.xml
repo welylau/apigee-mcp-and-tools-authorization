@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!-- The governing API Product could not be loaded: fail closed rather than guess limits. -->
+<RaiseFault continueOnError="false" enabled="true" name="RF-Product-Unavailable">
+  <DisplayName>RF-Product-Unavailable</DisplayName>
+  <FaultResponse>
+    <Set>
+      <Headers>
+        <Header name="Content-Type">application/json</Header>
+        <Header name="Retry-After">30</Header>
+      </Headers>
+      <Payload contentType="application/json">{
+  "error": "service_unavailable",
+  "message": "We can't process your request right now. Please try again in a moment."
+}</Payload>
+      <StatusCode>503</StatusCode>
+      <ReasonPhrase>Service Unavailable</ReasonPhrase>
+    </Set>
+  </FaultResponse>
+  <IgnoreUnresolvedVariables>true</IgnoreUnresolvedVariables>
+</RaiseFault>

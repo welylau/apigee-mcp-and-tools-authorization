@@ -61,15 +61,15 @@ PAYLOAD=$(jq -n --arg id "$DEV_CLIENT_ID" --arg secret "$DEV_CLIENT_SECRET" '{
   standardFlowEnabled: true,
   directAccessGrantsEnabled: true,
   serviceAccountsEnabled: false,
-  redirectUris: ["*"],
-  webOrigins: ["*"],
+  redirectUris: ["http://localhost:3000/*", "http://127.0.0.1:3000/*"],
+  webOrigins: ["http://localhost:3000", "http://127.0.0.1:3000"],
   protocolMappers: [{
     name: "biscuit-coffee-audience",
     protocol: "openid-connect",
     protocolMapper: "oidc-audience-mapper",
     config: {
       "included.custom.audience": "biscuit-coffee",
-      "id.token.claim": "true",
+      "id.token.claim": "false",
       "access.token.claim": "true"
     }
   }]

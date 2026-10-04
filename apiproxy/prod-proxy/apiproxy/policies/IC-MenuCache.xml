@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!--
+  Drops the cached menu after a successful updateMenuItem, so the next order
+  is priced with the new price (otherwise the gateway would keep pricing with
+  the old menu for up to 5 minutes).
+-->
+<InvalidateCache continueOnError="true" enabled="true" name="IC-MenuCache">
+  <DisplayName>IC-MenuCache</DisplayName>
+  <CacheKey>
+    <KeyFragment>biscuit-menu-prices</KeyFragment>
+  </CacheKey>
+  <Scope>Application</Scope>
+  <PurgeChildEntries>false</PurgeChildEntries>
+</InvalidateCache>

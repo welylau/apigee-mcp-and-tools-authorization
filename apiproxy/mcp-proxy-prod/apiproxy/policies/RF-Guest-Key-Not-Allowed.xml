@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!--
+  Guest path guard. A request WITHOUT an Authorization header may only use the
+  public customer key (biscuit-coffee-agent, or biscuit-coffee-agent-dev on the
+  dev proxy), whose product exposes the public tools only. Any other key - in
+  particular biscuit-coffee-staff - needs a verified staff JWT, so the staff
+  product cannot be selected by sending its key in x-api-key.
+
+  Same JSON-RPC 401 shape as AM-Fault-McpUnauthorized.
+-->
+<RaiseFault continueOnError="false" enabled="true" name="RF-Guest-Key-Not-Allowed">
+  <DisplayName>RF-Guest-Key-Not-Allowed</DisplayName>
+  <FaultResponse>
+    <Set>
+      <Headers>
+        <Header name="Content-Type">application/json</Header>
+        <Header name="WWW-Authenticate">Bearer resource_metadata="https://{request.header.host}/.well-known/oauth-protected-resource/mcp"</Header>
+      </Headers>
+      <Payload contentType="application/json">{
+  "jsonrpc": "2.0",
+  "id": {jsonrpc.id},
+  "error": {
+    "code": -32001,
+    "message": "Please sign in to use this tool.",
+    "data": {
+      "reason": "unauthorized"
+    }
+  }
+}</Payload>
+      <StatusCode>401</StatusCode>
+      <ReasonPhrase>Unauthorized</ReasonPhrase>
+    </Set>
+  </FaultResponse>
+  <IgnoreUnresolvedVariables>true</IgnoreUnresolvedVariables>
+</RaiseFault>

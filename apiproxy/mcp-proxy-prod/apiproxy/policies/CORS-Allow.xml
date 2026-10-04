@@ -1,11 +1,18 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!--
+  Browser CORS for the MCP endpoint. Only the two web UIs (customer and staff,
+  both Cloud Run URL forms) and local development may call it from a browser;
+  the UIs normally call MCP server-side, where CORS does not apply.
+  No AllowCredentials: auth is a Bearer token, never a cookie.
+-->
 <CORS continueOnError="false" enabled="true" name="CORS-Allow">
-  <AllowOrigins>{request.header.origin}</AllowOrigins>
+  <DisplayName>CORS-Allow</DisplayName>
+  <AllowOrigins>https://apigee-coffee-shop-ui-YOUR_GCP_PROJECT_NUMBER.asia-southeast1.run.app, https://apigee-coffee-shop-ui-yvgzrg2wda-as.a.run.app, https://apigee-coffee-shop-staff-ui-YOUR_GCP_PROJECT_NUMBER.asia-southeast1.run.app, https://apigee-coffee-shop-staff-ui-yvgzrg2wda-as.a.run.app, http://localhost:3000, http://localhost:3001</AllowOrigins>
   <AllowMethods>POST, GET, HEAD</AllowMethods>
-  <AllowHeaders>*</AllowHeaders>
-  <ExposeHeaders>*</ExposeHeaders>
-  <MaxAge>3628800</MaxAge>
-  <AllowCredentials>true</AllowCredentials>
+  <AllowHeaders>authorization, content-type, accept, x-api-key, mcp-session-id, mcp-protocol-version, last-event-id</AllowHeaders>
+  <ExposeHeaders>mcp-session-id, www-authenticate, retry-after</ExposeHeaders>
+  <MaxAge>600</MaxAge>
+  <AllowCredentials>false</AllowCredentials>
   <GeneratePreflightResponse>true</GeneratePreflightResponse>
   <IgnoreUnresolvedVariables>true</IgnoreUnresolvedVariables>
 </CORS>

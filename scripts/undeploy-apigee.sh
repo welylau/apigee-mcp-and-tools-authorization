@@ -1,96 +1,87 @@
 #!/bin/bash
+# Removes everything scripts/deploy-apigee.sh created in the PROD environment:
+# the two proxies, the developer apps (and their keys, incl. the staff key),
+# the developers and the three API Products. Dev assets (scripts/deploy-apigee-dev.sh)
+# are not touched.
+#
+# Idempotent: a 404 (already gone) is fine; any other failure stops the script.
+set -euo pipefail
 
-# Exit on error
-set -e
-
-# Sourced environment variables
 if [ -f .env ]; then
   echo "Sourcing .env..."
-  source .env
+  set -a; source .env; set +a
 fi
 
-PROJECT="${GOOGLE_CLOUD_PROJECT:-$PROJECT_ID}"
+PROJECT="${GOOGLE_CLOUD_PROJECT:-${PROJECT_ID:-}}"
 if [ -z "$PROJECT" ]; then
-  echo "ERROR: GOOGLE_CLOUD_PROJECT or PROJECT_ID must be set"
+  echo "ERROR: GOOGLE_CLOUD_PROJECT or PROJECT_ID must be set" >&2
   exit 1
 fi
-
 PROD_ENV="${APIGEE_PROD_ENV:-${APIGEE_ENV:-prod-env}}"
+STAFF_KEY="${KEYCLOAK_STAFF_CLIENT_ID:-biscuit-coffee-staff}"
 
-if [ -z "$PROD_ENV" ]; then
-  echo "ERROR: APIGEE_PROD_ENV (or APIGEE_ENV) must be set"
-  exit 1
-fi
-
-TOKEN=$(gcloud auth application-default print-access-token 2>/dev/null || gcloud auth print-access-token 2>/dev/null)
+TOKEN=$(gcloud auth application-default print-access-token 2>/dev/null || gcloud auth print-access-token 2>/dev/null || true)
 if [ -z "$TOKEN" ]; then
-  echo "ERROR: Failed to get GCP access token."
+  echo "ERROR: Failed to get GCP access token." >&2
   exit 1
 fi
 
-# Ensure apigeecli is installed
-if ! command -v apigeecli &> /dev/null; then
-  if [ -f "$HOME/.apigeecli/bin/apigeecli" ]; then
-    export PATH=$PATH:$HOME/.apigeecli/bin
-  else
-    echo "apigeecli not found. Nothing to clean."
-    exit 0
-  fi
-fi
+API="https://apigee.googleapis.com/v1/organizations/$PROJECT"
 
-echo "================================================="
-echo "Cleaning up Apigee Assets"
-echo "================================================="
+# DELETE helper: 2xx = deleted, 404 = already gone, anything else = abort.
+delete() { # path description
+  local code
+  code=$(curl -s -o /dev/null -w "%{http_code}" -X DELETE -H "Authorization: Bearer $TOKEN" "$API$1")
+  case "$code" in
+    2??) echo "  deleted   $2" ;;
+    404) echo "  not found $2" ;;
+    *)   echo "ERROR: DELETE $1 -> HTTP $code" >&2; exit 1 ;;
+  esac
+}
 
-echo "Deleting Developer Apps..."
-apigeecli apps delete --name "biscuit-coffee-admin-app" --org "$PROJECT" --token "$TOKEN" 2>/dev/null || true
-apigeecli apps delete --name "biscuit-coffee-agent-app" --org "$PROJECT" --token "$TOKEN" 2>/dev/null || true
+# Prints the revision of $1 deployed in $PROD_ENV, or nothing.
+deployed_revision() {
+  curl -s -H "Authorization: Bearer $TOKEN" "$API/environments/$PROD_ENV/apis/$1/deployments" \
+    | python3 -c 'import json,sys
+try:
+    d = json.load(sys.stdin).get("deployments", [])
+    print(d[0]["revision"] if d else "")
+except Exception:
+    print("")'
+}
 
-echo "Deleting Developers..."
-apigeecli developers delete --email "admin-developer@biscuit-coffee.com" --org "$PROJECT" --token "$TOKEN" 2>/dev/null || true
-apigeecli developers delete --email "agent-developer@biscuit-coffee.com" --org "$PROJECT" --token "$TOKEN" 2>/dev/null || true
-
-echo "Deleting API Products..."
-apigeecli products delete --name "biscuit-coffee-admin" --org "$PROJECT" --token "$TOKEN" 2>/dev/null || true
-apigeecli products delete --name "biscuit-coffee-agent" --org "$PROJECT" --token "$TOKEN" 2>/dev/null || true
-
-# Helper to get the currently deployed revision of a proxy in a specific environment
-get_deployed_revision() {
-  local name=$1
-  local env=$2
+undeploy_and_delete_proxy() { # name
   local rev
-  rev=$(apigeecli apis listdeploy --name "$name" --org "$PROJECT" --env "$env" --token "$TOKEN" 2>/dev/null | jq -r '.deployments[0].revision' 2>/dev/null || true)
-  if [ "$rev" != "null" ] && [ -n "$rev" ]; then
-    echo "$rev"
+  rev=$(deployed_revision "$1")
+  if [ -n "$rev" ]; then
+    echo "  undeploying $1 rev $rev from $PROD_ENV"
+    delete "/environments/$PROD_ENV/apis/$1/revisions/$rev/deployments" "$1 deployment"
   fi
+  delete "/apis/$1" "proxy $1"
 }
-
-# Function to undeploy and delete a proxy
-undeploy_and_delete_proxy() {
-  local name=$1
-  local envs=("$2" "$3")
-  for env in "${envs[@]}"; do
-    if [ -n "$env" ]; then
-      local rev
-      rev=$(get_deployed_revision "$name" "$env")
-      if [ -n "$rev" ]; then
-        echo "Undeploying proxy: $name (revision $rev) from environment: $env"
-        apigeecli apis undeploy --name "$name" --org "$PROJECT" --env "$env" --rev "$rev" --token "$TOKEN" 2>/dev/null || true
-      else
-        echo "Proxy $name is not deployed in environment: $env"
-      fi
-    fi
-  done
-  echo "Deleting proxy: $name"
-  apigeecli apis delete --name "$name" --org "$PROJECT" --token "$TOKEN" 2>/dev/null || true
-}
-
-# Cleanup MCP proxy
-undeploy_and_delete_proxy "mcp-proxy-prod" "$PROD_ENV"
-
-# Cleanup Biscuit-Coffee-Shop proxy
-undeploy_and_delete_proxy "Biscuit-Coffee-Shop" "$PROD_ENV"
 
 echo "================================================="
-echo "Apigee Cleanup Complete!"
+echo "Cleaning up Apigee assets in $PROJECT / $PROD_ENV"
+echo "================================================="
+
+echo "Proxies..."
+undeploy_and_delete_proxy "mcp-proxy-prod"
+undeploy_and_delete_proxy "Biscuit-Coffee-Shop"
+
+echo "Developer apps and keys..."
+delete "/developers/admin-developer@biscuit-coffee.com/apps/biscuit-coffee-admin-app/keys/$STAFF_KEY" "staff key $STAFF_KEY"
+delete "/developers/admin-developer@biscuit-coffee.com/apps/biscuit-coffee-admin-app" "app biscuit-coffee-admin-app"
+delete "/developers/agent-developer@biscuit-coffee.com/apps/biscuit-coffee-agent-app" "app biscuit-coffee-agent-app"
+
+echo "Developers..."
+delete "/developers/admin-developer@biscuit-coffee.com" "developer admin-developer@biscuit-coffee.com"
+delete "/developers/agent-developer@biscuit-coffee.com" "developer agent-developer@biscuit-coffee.com"
+
+echo "API Products..."
+delete "/apiproducts/biscuit-coffee-agent" "product biscuit-coffee-agent"
+delete "/apiproducts/biscuit-coffee-staff" "product biscuit-coffee-staff"
+delete "/apiproducts/biscuit-coffee-admin" "product biscuit-coffee-admin"
+
+echo "================================================="
+echo "Apigee cleanup complete."
 echo "================================================="

@@ -30,35 +30,20 @@ function run() {
 
 
   // ---- Enforcement toggle -------------------------------------------------
-  // Published by mcp-proxy-prod from the `enforceOrderOwnership` custom
-  // attribute on the biscuit-coffee-agent API Product (AM-OwnershipFlag).
+  // The `enforceOrderOwnership` custom attribute of the API Product that the
+  // caller's Keycloak client (VERIFIED JWT azp) is bound to. This proxy
+  // resolves and reads that product itself (JS-ResolveProduct, AE-ApiProduct,
+  // JS-ProductAttrs, cached 60s) and publishes it as product.enforce_ownership.
   //
-  // THE SIGNATURE IS NOT OPTIONAL. This proxy is directly reachable at
-  // prod.apigee-demo.com with nothing but an ordinary customer token, so an
-  // inbound header is attacker-controlled by default. Without this check a
-  // customer could simply send `X-Enforce-Order-Ownership: false` and turn the
-  // entire ownership control off - verified against the live gateway, which
-  // returned another customer's order in full. Only mcp-proxy-prod knows the
-  // signature, so only a request that really came through the MCP path can
-  // relax the policy.
+  // Inbound headers are never consulted: AM-StripInboundPolicyHeaders removes
+  // the legacy X-Enforce-Order-Ownership / X-Policy-Signature headers at the
+  // top of PreFlow, so a customer cannot turn the control off.
   //
-  // In a production deployment the shared value belongs in an encrypted KVM
-  // rather than the bundle; it is inline here to match how the rest of this
-  // demo repo already handles its secrets.
-  var POLICY_SIGNATURE = "bcs-gw-policy-9d41f7a2c6be4815";
-  var signature = String(
-    context.getVariable("request.header.X-Policy-Signature") || ""
-  );
-  var trusted = (signature === POLICY_SIGNATURE);
-
-  // Only the exact string "false", from a trusted sender, disables the check.
-  // Absent, empty, unrecognised or unsigned all mean ENFORCE, so a direct REST
-  // caller, a spoofed header, or a misconfigured product all stay protected.
+  // Only the exact string "false" disables the check. Absent, empty or
+  // unrecognised all mean ENFORCE, so a misconfigured product stays protected.
   // The demo "before" state is produced by setting the product attribute to
   // false, which is a change only an operator can make.
-  var flag = trusted
-    ? context.getVariable("request.header.X-Enforce-Order-Ownership")
-    : null;
+  var flag = context.getVariable("product.enforce_ownership");
   var enforce = !(flag && String(flag).toLowerCase() === "false");
 
 

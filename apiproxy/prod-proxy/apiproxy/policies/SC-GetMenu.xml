@@ -5,10 +5,11 @@
   Uses the same GoogleIDToken authentication as targets/default.xml, because the
   backend is a private Cloud Run service.
 
-  continueOnError is true deliberately: if the menu cannot be fetched, the order
-  must not be blocked. checkOrderValue.js then falls back to the same default
-  item price the backend uses, which errs towards allowing the order through
-  rather than rejecting a legitimate customer.
+  continueOnError is true so that a failed fetch reaches checkOrderValue.js
+  instead of a generic 500. The script only accepts a 200 with a non-empty
+  priced menu; anything else sets order.pricing_unavailable and the flow
+  returns RF-Pricing-Unavailable (503). An order is never priced with
+  fallback prices, so a backend outage cannot be used to slip past the cap.
 -->
 <ServiceCallout continueOnError="true" enabled="true" name="SC-GetMenu">
   <DisplayName>SC-GetMenu</DisplayName>

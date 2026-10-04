@@ -1,7 +1,11 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!--
+  Signed-in path: the API key is the VERIFIED azp claim from JWT-VerifyToken,
+  so the client a token was issued to decides the API Product (customer or
+  staff). Any x-api-key header is ignored on this path.
+-->
 <VerifyAPIKey continueOnError="false" enabled="true" name="VA-VerifyKey">
+  <DisplayName>VA-VerifyKey</DisplayName>
   <Properties/>
-  <APIKey ref="jwt.JWT-Decode.claim.azp"/>
-  <!-- If you want to test with an API key in the header instead of using the client ID from the JWT, uncomment the following line and comment out the line above. -->
-  <!-- <APIKey ref="request.header.x-api-key"/> -->
+  <APIKey ref="jwt.JWT-VerifyToken.claim.azp"/>
 </VerifyAPIKey>

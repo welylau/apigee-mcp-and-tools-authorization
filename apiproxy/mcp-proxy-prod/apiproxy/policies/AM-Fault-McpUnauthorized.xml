@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!--
+  JSON-RPC 401 for any JWT-VerifyToken failure (expired, forged signature,
+  wrong issuer/audience, ID token). Generic on purpose: the reason is in the
+  flow variables / Debug session, never in the response.
+  WWW-Authenticate points MCP clients at the protected-resource metadata.
+-->
+<AssignMessage continueOnError="false" enabled="true" name="AM-Fault-McpUnauthorized">
+  <DisplayName>AM-Fault-McpUnauthorized</DisplayName>
+  <Set>
+    <Headers>
+      <Header name="Content-Type">application/json</Header>
+      <Header name="WWW-Authenticate">Bearer error="invalid_token", resource_metadata="https://{request.header.host}/.well-known/oauth-protected-resource/mcp"</Header>
+    </Headers>
+    <Payload contentType="application/json">{
+  "jsonrpc": "2.0",
+  "id": {jsonrpc.id},
+  "error": {
+    "code": -32001,
+    "message": "Please sign in again: your session is missing or has expired.",
+    "data": {
+      "reason": "unauthorized"
+    }
+  }
+}</Payload>
+    <StatusCode>401</StatusCode>
+    <ReasonPhrase>Unauthorized</ReasonPhrase>
+  </Set>
+  <IgnoreUnresolvedVariables>true</IgnoreUnresolvedVariables>
+  <AssignTo createNew="false" transport="http" type="response"/>
+</AssignMessage>

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!--
+  Picks the API Product that governs this request from the VERIFIED JWT azp
+  (azp-products property set, per environment), and derives the per-user
+  rate-limit key and the raw user token. See resolveProduct.js.
+-->
+<Javascript continueOnError="false" enabled="true" timeLimit="200" name="JS-ResolveProduct">
+  <DisplayName>JS-ResolveProduct</DisplayName>
+  <ResourceURL>jsc://resolveProduct.js</ResourceURL>
+</Javascript>

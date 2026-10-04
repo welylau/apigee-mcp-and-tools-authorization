@@ -7,8 +7,7 @@
   that already exist at that point.
 
   Exactly one of VA-VerifyKey / VA-VerifyKey-Header runs per request, so each
-  template concatenates both; the one that did not run renders as "" (same
-  technique as AM-MaxOrderAmount).
+  template concatenates both; the one that did not run renders as "".
 
   The API key itself is NEVER stored - only its SHA-256 fingerprint.
   audit.attributes_json is pre-seeded with "{}" so the log stays valid JSON even

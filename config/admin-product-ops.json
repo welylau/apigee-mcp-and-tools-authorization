@@ -53,30 +53,6 @@
         "apiSource": "mcp-proxy-prod",
         "operations": [
           {
-            "operation": "tools/call/getPaymentMethods"
-          }
-        ]
-      },
-      {
-        "apiSource": "mcp-proxy-prod",
-        "operations": [
-          {
-            "operation": "tools/call/getPaymentMethodById"
-          }
-        ]
-      },
-      {
-        "apiSource": "mcp-proxy-prod",
-        "operations": [
-          {
-            "operation": "tools/call/addPaymentMethod"
-          }
-        ]
-      },
-      {
-        "apiSource": "mcp-proxy-prod",
-        "operations": [
-          {
             "operation": "tools/call/listOrders"
           }
         ]

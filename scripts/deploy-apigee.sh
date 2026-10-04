@@ -1,19 +1,24 @@
 #!/bin/bash
 
-# Exit on error
-set -e
+# Exit on error, on unset variables and on failures inside pipelines.
+# Variables that may legitimately be empty are read as ${VAR:-}.
+set -euo pipefail
 
-# Sourced environment variables
+# Sourced environment variables (.env may reference unset vars, so relax -u
+# only while sourcing it)
 if [ -f .env ]; then
   echo "Sourcing .env..."
+  set +u
   source .env
+  set -u
 fi
 
-PROJECT="${GOOGLE_CLOUD_PROJECT:-$PROJECT_ID}"
+PROJECT="${GOOGLE_CLOUD_PROJECT:-${PROJECT_ID:-}}"
 if [ -z "$PROJECT" ]; then
   echo "ERROR: GOOGLE_CLOUD_PROJECT or PROJECT_ID must be set"
   exit 1
 fi
+APIGEE_PROD_HOSTNAME="${APIGEE_PROD_HOSTNAME:-}"
 
 echo "Setting gcloud project to $PROJECT..."
 gcloud config set project "$PROJECT"
@@ -64,17 +69,13 @@ if [[ "$(uname)" == "Darwin" ]]; then
 fi
 
 echo "================================================="
-echo "Replacing Placeholders in Agents & Proxies"
+echo "Replacing Placeholders in Proxies"
 echo "================================================="
 
-# 1. Replace hostnames and local agent python files
-if [ -f "./biscuit-coffee/python/agents/coffee_agent_prod/tools.py" ]; then
-  echo "Replacing prod hostname in coffee_agent_prod/tools.py..."
-  sed "${sedi_args[@]}" "s|@APIGEE_PROD_HOSTNAME@|$APIGEE_PROD_HOSTNAME|g" ./biscuit-coffee/python/agents/coffee_agent_prod/tools.py
-fi
-
-# 2. Create a temporary staging directory to process proxy bundle files
+# 1. Create a temporary staging directory to process proxy bundle files.
+#    Placeholders are only ever replaced in this copy, never in tracked files.
 TMP_DIR=$(mktemp -d)
+trap 'rm -rf "${TMP_DIR:-}"' EXIT
 echo "Staging proxy bundles in temporary directory: $TMP_DIR"
 
 mkdir -p "$TMP_DIR/prod-proxy"
@@ -82,6 +83,12 @@ cp -r ./apiproxy/prod-proxy/apiproxy "$TMP_DIR/prod-proxy/"
 
 mkdir -p "$TMP_DIR/mcp-proxy-prod"
 cp -r ./apiproxy/mcp-proxy-prod/apiproxy "$TMP_DIR/mcp-proxy-prod/"
+
+# Never replace a hostname placeholder with an empty string.
+if [ -z "$APIGEE_PROD_HOSTNAME" ] && grep -rq '@APIGEE_PROD_HOSTNAME@' "$TMP_DIR"; then
+  echo "ERROR: APIGEE_PROD_HOSTNAME must be set (proxy files contain @APIGEE_PROD_HOSTNAME@)"
+  exit 1
+fi
 
 # Replace placeholders in temp copies
 echo "Performing replacements on proxy files..."
@@ -103,7 +110,7 @@ fi
 if [ "$DEPLOY_MCP" = true ]; then
   echo "Deploying Prod MCP Discovery Proxy to $PROD_ENV..."
   apigeecli apis create bundle -n mcp-proxy-prod -f "$TMP_DIR/mcp-proxy-prod/apiproxy" --org "$PROJECT" --token "$TOKEN"
-  apigeecli apis deploy --name mcp-proxy-prod --org "$PROJECT" --env "$PROD_ENV" --ovr --wait --token "$TOKEN"
+  apigeecli apis deploy --name mcp-proxy-prod --org "$PROJECT" --env "$PROD_ENV" -s "sa-apigee-aiservices@${PROJECT}.iam.gserviceaccount.com" --ovr --wait --token "$TOKEN"
 fi
 
 # Clean up temp staging directory
@@ -162,6 +169,29 @@ create_or_update_product() {
   rm -f "$response_file"
 }
 
+# Idempotently make an existing consumer key linked to EXACTLY one product:
+# link it if missing, then unlink every other product. Prevents drift such as
+# the customer key biscuit-coffee-agent also carrying biscuit-coffee-admin.
+#   $1 app URL (.../developers/<dev>/apps/<app>)  $2 consumer key  $3 product
+ensure_key_only_product() {
+  local app_url="$1" key="$2" want="$3" linked p
+  linked=$(curl -sf -H "Authorization: Bearer $TOKEN" "$app_url/keys/$key" | jq -r '.apiProducts[]?.apiproduct') || {
+    echo "ERROR: could not read key $key"; exit 1; }
+  if ! grep -qx "$want" <<<"$linked"; then
+    echo "  Linking $want to key $key"
+    curl -sf -X POST "$app_url/keys/$key" \
+      -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+      -d "{\"apiProducts\": [\"$want\"]}" >/dev/null
+  fi
+  while IFS= read -r p; do
+    if [ -n "$p" ] && [ "$p" != "$want" ]; then
+      echo "  Unlinking $p from key $key"
+      curl -sf -X DELETE "$app_url/keys/$key/apiproducts/$(jq -rn --arg p "$p" '$p|@uri')" \
+        -H "Authorization: Bearer $TOKEN" >/dev/null
+    fi
+  done <<<"$linked"
+}
+
 # 3. Deploy API Products, Developer, and App (if enabled)
 if [ "$DEPLOY_PRODUCTS" = true ]; then
   echo "Creating/Updating API Products..."
@@ -170,6 +200,9 @@ if [ "$DEPLOY_PRODUCTS" = true ]; then
 
   # Agent Product
   create_or_update_product "biscuit-coffee-agent" "Biscuit Coffee AI Agent Product" "$PROD_ENV" "./config/agent-product-ops.json"
+
+  # Staff Product (staff + store manager tools; no quota / order limits)
+  create_or_update_product "biscuit-coffee-staff" "Biscuit Coffee Staff Product" "$PROD_ENV" "./config/staff-product-ops.json"
 
 
   echo "Creating/Updating Developers..."
@@ -225,15 +258,60 @@ if [ "$DEPLOY_PRODUCTS" = true ]; then
     -H "Authorization: Bearer $TOKEN" \
     "https://apigee.googleapis.com/v1/organizations/$PROJECT/developers/agent-developer@biscuit-coffee.com/apps/biscuit-coffee-agent-app/keys/biscuit-coffee-agent")
   if [ "$key_status" -ne 200 ]; then
-
+    # Only the consumer KEY (= Keycloak client id, the JWT azp) is verified by
+    # mcp-proxy-prod; the consumer secret is never checked. It is always a
+    # fresh random value: the Keycloak client secret must never be copied into
+    # Apigee (it would then be readable by anyone with Apigee app access).
+    AGENT_KEY_SECRET="$(openssl rand -hex 24)"
     apigeecli apps keys create --org "$PROJECT" --token "$TOKEN" \
       --name "biscuit-coffee-agent-app" \
       --key "biscuit-coffee-agent" \
-      --secret "YOUR_KEYCLOAK_CLIENT_SECRET" \
+      --secret "$AGENT_KEY_SECRET" \
       --dev "agent-developer@biscuit-coffee.com" \
       --prods "biscuit-coffee-agent"
+    unset AGENT_KEY_SECRET
   else
-    echo "App credential key biscuit-coffee-agent already exists. Skipping."
+    echo "App credential key biscuit-coffee-agent already exists. Ensuring it is linked only to biscuit-coffee-agent..."
+    ensure_key_only_product \
+      "https://apigee.googleapis.com/v1/organizations/$PROJECT/developers/agent-developer@biscuit-coffee.com/apps/biscuit-coffee-agent-app" \
+      "biscuit-coffee-agent" "biscuit-coffee-agent"
+  fi
+
+  # ---- Staff app key --------------------------------------------------------
+  # Key biscuit-coffee-staff (= Keycloak client id KEYCLOAK_STAFF_CLIENT_ID) on
+  # biscuit-coffee-admin-app, linked ONLY to the biscuit-coffee-staff product.
+  STAFF_KEY="${KEYCLOAK_STAFF_CLIENT_ID:-biscuit-coffee-staff}"
+  ADMIN_DEV="admin-developer@biscuit-coffee.com"
+  ADMIN_APP_URL="https://apigee.googleapis.com/v1/organizations/$PROJECT/developers/$ADMIN_DEV/apps/biscuit-coffee-admin-app"
+
+  echo "Setting audit attributes on biscuit-coffee-admin-app..."
+  # POST .../attributes REPLACES the whole list, so merge with what is there.
+  current_attrs=$(curl -sf -H "Authorization: Bearer $TOKEN" "$ADMIN_APP_URL" | jq -c '.attributes // []')
+  new_attrs=$(jq -c -n --argjson cur "$current_attrs" '
+    ($cur | map({(.name): .value}) | add // {}) + {
+      "DisplayName": "Biscuit Coffee Staff App",
+      "DetailDesc": "Staff and store-manager app: order board, approvals, employees and store operations",
+      "RiskLevel": "High"
+    } | to_entries | map({name: .key, value: .value}) | {attribute: .}')
+  curl -sf -X POST "$ADMIN_APP_URL/attributes" \
+    -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+    -d "$new_attrs" >/dev/null
+
+  echo "Registering staff IdP client ID ($STAFF_KEY)..."
+  staff_key_status=$(curl -s -o /dev/null -w "%{http_code}" \
+    -H "Authorization: Bearer $TOKEN" "$ADMIN_APP_URL/keys/$STAFF_KEY")
+  if [ "$staff_key_status" -ne 200 ]; then
+    STAFF_KEY_SECRET="$(openssl rand -hex 24)"   # never used by the gateway
+    apigeecli apps keys create --org "$PROJECT" --token "$TOKEN" \
+      --name "biscuit-coffee-admin-app" \
+      --key "$STAFF_KEY" \
+      --secret "$STAFF_KEY_SECRET" \
+      --dev "$ADMIN_DEV" \
+      --prods "biscuit-coffee-staff"
+    unset STAFF_KEY_SECRET
+  else
+    echo "App credential key $STAFF_KEY already exists. Ensuring it is linked only to biscuit-coffee-staff..."
+    ensure_key_only_product "$ADMIN_APP_URL" "$STAFF_KEY" "biscuit-coffee-staff"
   fi
 
 fi
