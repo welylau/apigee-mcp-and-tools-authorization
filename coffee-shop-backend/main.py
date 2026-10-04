@@ -12,7 +12,6 @@ from fastapi import Depends, FastAPI, HTTPException, Query, Header, Path, Reques
 from fastapi.exceptions import RequestValidationError
 from fastapi.encoders import jsonable_encoder
 from fastapi.exception_handlers import request_validation_exception_handler
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from google.api_core import exceptions as gcp_exceptions
 from pydantic import BaseModel, ConfigDict, Field
@@ -57,7 +56,7 @@ ALLOWED_TRANSITIONS = {
     STATUS_READY: {STATUS_COMPLETED, STATUS_CANCELLED},
 }
 ID_PATTERN = r"^[A-Za-z0-9_-]{1,64}$"
-EMAIL_PATTERN = r"^[^@\s]{1,64}@[^@\s]{1,190}\.[^@\s]{2,}$"
+EMAIL_PATTERN = r"^[^@\s/]{1,64}@[^@\s/]{1,190}\.[^@\s/]{2,}$"  # no "/": emails are Firestore doc ids
 NAME_PATTERN = r"^[^\x00-\x1f\x7f<>{}\[\]`]{1,80}$"
 PHONE_PATTERN = r"^[0-9+()\- ]{3,20}$"
 # Filters a manager may use on GET /orders (same allow-list as the gateway).
@@ -164,7 +163,7 @@ SEED_ORDERS = [
         "name": "David",
         "loyalty_id": "L-12345",
         "items": [{"item_id": "item-1-s", "quantity": 2}],
-        "status": "COMPLETE",
+        "status": "COMPLETED",
         "total_amount": 6.50
     },
     {
@@ -181,6 +180,10 @@ SEED_ORDERS = [
         "total_amount": 11.00
     }
 ]
+
+# Seed orders get a created_at when they are written (minutes before seeding),
+# so they sort and count like real orders.
+SEED_ORDER_AGE_MINUTES = {"67449": 10, "10001": 24 * 60, "10002": 25}
 
 SEED_LOYALTY = [
     {
@@ -242,6 +245,31 @@ def _can_see_order(principal: Principal, order: dict) -> bool:
     return bool(principal.email) and owner == principal.email
 
 
+# Who-did-what fields for the store team only. A customer reading their own
+# order sees status, items, total, created_at and the decision + reason (the
+# UI shows why an order was rejected), but not staff emails or channels.
+STAFF_ONLY_ORDER_FIELDS = {"updated_by", "channel"}
+CUSTOMER_APPROVAL_FIELDS = {"decision", "reason", "decided_at"}
+
+
+def customer_order_view(order: dict) -> dict:
+    """Copy of `order` without staff-internal fields (for customer-scope reads)."""
+    view = {k: v for k, v in order.items() if k not in STAFF_ONLY_ORDER_FIELDS}
+    approval = order.get("approval")
+    if isinstance(approval, dict):
+        view["approval"] = {k: v for k, v in approval.items() if k in CUSTOMER_APPROVAL_FIELDS}
+    history = order.get("status_history")
+    if isinstance(history, list):
+        view["status_history"] = [
+            {k: v for k, v in h.items() if k != "by"} if isinstance(h, dict) else h for h in history
+        ]
+    return view
+
+
+def order_view_for(principal: Principal, order: dict) -> dict:
+    return order if principal.is_staff else customer_order_view(order)
+
+
 def decide_order(order_id: str, approved: bool, decided_by: str, channel: str,
                  reason: Optional[str] = None, expected_status: Optional[str] = None) -> dict:
     """Record an approve/reject decision for an order that is waiting for approval.
@@ -269,6 +297,15 @@ def decide_order(order_id: str, approved: bool, decided_by: str, channel: str,
             raise HTTPException(
                 status_code=409,
                 detail={"message": f"Order {order_id} is not waiting for approval (status {current})"},
+            )
+        # Staff and managers can also sign in to the customer app (the customer
+        # client grants biscuit_coffee_customer to every realm user), so they
+        # could place an order and then approve it themselves. Not allowed.
+        if approved and str(data.get("email") or "").strip().lower() == str(decided_by or "").strip().lower():
+            raise HTTPException(
+                status_code=403,
+                detail={"message": f"You cannot approve your own order {order_id}. "
+                                   "Please ask another staff member to review it."},
             )
         now = _now_iso()
         new_status = STATUS_IN_PROGRESS if approved else STATUS_REJECTED
@@ -348,9 +385,11 @@ def init_database():
         if len(list(orders_ref.limit(1).stream())) == 0:
             logger.info(f"Seeding sample coffee orders into {ORDERS_COLLECTION}...")
             batch = client.batch()
+            seeded_at = datetime.now(timezone.utc)
             for order in SEED_ORDERS:
                 doc_ref = orders_ref.document(order["order_id"])
-                batch.set(doc_ref, order)
+                age = SEED_ORDER_AGE_MINUTES.get(order["order_id"], 60)
+                batch.set(doc_ref, {**order, "created_at": (seeded_at - timedelta(minutes=age)).isoformat()})
             batch.commit()
 
         logger.info("Firestore initialization and seeding check completed.")
@@ -364,13 +403,9 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Biscuit Coffee Shop Backend", lifespan=lifespan)
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# No CORS middleware: this service is called server-to-server only (Apigee
+# with a Google ID token), never from a browser. The old allow_origins=["*"]
+# with allow_credentials=True was both unnecessary and unsafe.
 
 # Customer requests (placeOrder, signUpLoyalty) reach this service through the
 # agent, so a bad body gets 400 with a sentence the agent can relay
@@ -413,7 +448,7 @@ class SignUpLoyaltyRequest(BaseModel):
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "project": PROJECT_ID, "database": DATABASE_ID}
+    return {"status": "ok"}
 
 @app.get("/")
 def root():
@@ -442,6 +477,9 @@ def get_menu():
     items = []
     for doc in client.collection("menu").stream():
         item = doc.to_dict()
+        # Public route: drop the audit fields a manager edit adds (manager email).
+        item.pop("updated_by", None)
+        item.pop("updated_at", None)
         # available=false means sold out (set by a manager via updateMenuItem).
         item["available"] = item.get("available", True) is not False
         items.append(item)
@@ -474,16 +512,22 @@ def list_orders(
 
     filter_key = None
     filter_val = None
+    # is_manager is an exact match on one space-separated scope token
+    # (auth.Principal.scopes is a set), never a substring test.
     if principal.is_manager:
-        if filter and ":" in filter:
-            parts = filter.split(":", 1)
-            filter_key = parts[0].strip()
-            filter_val = parts[1].strip()
-            if filter_key not in ORDER_FILTER_KEYS:
+        if filter:
+            key, sep, val = filter.partition(":")
+            filter_key, filter_val = key.strip(), val.strip()
+            # Validated here, before anything reaches Firestore's where().
+            if not sep or filter_key not in ORDER_FILTER_KEYS or not filter_val:
                 raise HTTPException(status_code=400, detail={
-                    "message": "Unsupported filter key. Supported keys: email, name, loyalty_id, status."})
+                    "message": "Use filter=key:value. Supported keys: email, name, loyalty_id, status."})
+            if filter_key == "email":
+                filter_val = filter_val.lower()
+            elif filter_key == "status":
+                filter_val = filter_val.upper()
         elif email:
-            filter_key, filter_val = "email", email.strip()
+            filter_key, filter_val = "email", email.strip().lower()
         elif name:
             filter_key, filter_val = "name", name.strip()
         elif loyalty_id:
@@ -493,19 +537,13 @@ def list_orders(
         # verified email (the gateway pins it too, see AM-PinOrderFilter).
         filter_key, filter_val = "email", _caller_email(principal)
 
-    orders = []
     if filter_key and filter_val:
-        query = orders_ref.where(filter_key, "==", filter_val)
-        for doc in query.stream():
-            orders.append(doc.to_dict())
+        docs = orders_ref.where(filter_key, "==", filter_val).stream()
     else:
-        for doc in orders_ref.stream():
-            orders.append(doc.to_dict())
-
-    # Fallback to seed if empty
-    if not orders and not filter_key:
-        return SEED_ORDERS
-    return orders
+        docs = orders_ref.stream()
+    # No seed fallback: an empty collection is an empty list. (Sample orders
+    # are written to Firestore once by init_database, never invented per call.)
+    return [order_view_for(principal, doc.to_dict() or {}) for doc in docs]
 
 
 def _price_list(client) -> dict:
@@ -603,7 +641,7 @@ def place_order(
     order_data = {
         "email": customer_email,
         "name": customer_name,
-        "loyalty_id": loyalty_id or "L-12345",
+        "loyalty_id": loyalty_id,  # None if not a member (was a seed customer's id)
         "items": [item.model_dump() for item in order_req.items],
         "status": status,
         "eta_minutes": random.randint(5, 9),
@@ -633,7 +671,7 @@ def get_order(
     # Same 404 for "missing" and "not yours", so order ids cannot be probed.
     if not doc.exists or not _can_see_order(principal, doc.to_dict() or {}):
         raise _order_not_found(order_id)
-    return doc.to_dict()
+    return order_view_for(principal, doc.to_dict() or {})
 
 @app.delete("/orders/{order_id}")
 def cancel_order(
@@ -652,16 +690,35 @@ def cancel_order(
     return {"message": "Order has been cancelled successfully"}
 
 
-def _loyalty_email(principal: Principal, requested: Optional[str]) -> str:
-    """Customers act on their own account; staff/managers may name another email."""
-    if requested and principal.is_staff:
-        return requested.strip().lower()
-    return _caller_email(principal)
+OWN_LOYALTY_ONLY = "You can only use the rewards account for your own email address."
+NOT_A_MEMBER_SELF = (
+    "You're not a Biscuit Coffee rewards member yet. Sign up for rewards to start earning points."
+)
+NOT_A_MEMBER_OTHER = "{email} is not a Biscuit Coffee rewards member yet."
+
+
+def _loyalty_email(principal: Principal, requested: Optional[str], staff_may_choose: bool) -> str:
+    """Email whose loyalty account is used.
+
+    Customers are bound to their verified token email: naming any other address
+    -> 403 (not silently swapped, so the agent never reports someone else's
+    balance as theirs or vice versa). Staff (or managers, for signup) may name
+    another email.
+    """
+    wanted = (requested or "").strip().lower()
+    if wanted and not re.match(EMAIL_PATTERN, wanted):
+        raise HTTPException(status_code=400, detail={"message": "Please give a valid email address."})
+    if wanted and staff_may_choose:
+        return wanted
+    own = _caller_email(principal)
+    if wanted and wanted != own:
+        raise HTTPException(status_code=403, detail={"message": OWN_LOYALTY_ONLY})
+    return own
 
 
 @app.post("/loyalty/signup")
 def signup_loyalty(req: SignUpLoyaltyRequest, principal: Principal = Depends(current_principal)):
-    email = req.email.strip().lower() if (req.email and principal.is_manager) else _caller_email(principal)
+    email = _loyalty_email(principal, req.email, staff_may_choose=principal.is_manager)
     name = (req.name or "").strip() or principal.name or "Valued Customer"
     client = get_firestore_client()
     doc_ref = client.collection("loyalty_accounts").document(email)
@@ -677,8 +734,11 @@ def signup_loyalty(req: SignUpLoyaltyRequest, principal: Principal = Depends(cur
             "phone": (req.phone or "").strip(),
             "points": 100
         }
-        doc_ref.set(acc_data)
-        logger.info(f"Created loyalty account {loyalty_id}")
+        try:
+            doc_ref.create(acc_data)  # never overwrite an account created meanwhile
+            logger.info(f"Created loyalty account {loyalty_id}")
+        except gcp_exceptions.AlreadyExists:
+            loyalty_id = (doc_ref.get().to_dict() or {}).get("loyalty_id")
 
     return {
         "loyalty_id": loyalty_id,
@@ -687,14 +747,19 @@ def signup_loyalty(req: SignUpLoyaltyRequest, principal: Principal = Depends(cur
 
 @app.get("/loyalty/balance")
 def get_loyalty_balance(
-    email: Optional[str] = Query(None, max_length=254, description="The user's email address (customers: ignored, always their own)"),
+    email: Optional[str] = Query(None, max_length=254, description="The user's email address (customers: must be their own)"),
     principal: Principal = Depends(current_principal),
 ):
     client = get_firestore_client()
-    doc = client.collection("loyalty_accounts").document(_loyalty_email(principal, email)).get()
-    if doc.exists:
-        return {"points": doc.to_dict().get("points", 150)}
-    return {"points": 150}
+    member_email = _loyalty_email(principal, email, staff_may_choose=principal.is_staff)
+    doc = client.collection("loyalty_accounts").document(member_email).get()
+    if not doc.exists:
+        # No invented balance: a non-member is told how to join (customers) or
+        # that the address has no account (staff looking someone up).
+        own = member_email == _caller_email(principal)
+        message = NOT_A_MEMBER_SELF if own else NOT_A_MEMBER_OTHER.format(email=member_email)
+        raise HTTPException(status_code=404, detail={"error": "not_a_member", "message": message})
+    return {"points": (doc.to_dict() or {}).get("points", 0)}
 
 @app.get("/rewards/{email}")
 def get_rewards(email: str = Path(..., max_length=254), principal: Principal = Depends(current_principal)):
@@ -881,12 +946,21 @@ def staff_update_store_hours(
         entry = {"day": day, "open": body.open, "close": body.close,
                  "hours": f"{_to_12h(body.open)} - {_to_12h(body.close)}"}
 
-    doc_ref = get_firestore_client().collection("store_info").document("hours")
-    snap = doc_ref.get()
-    days = list((snap.to_dict() or {}).get("days") or SEED_HOURS) if snap.exists else [dict(d) for d in SEED_HOURS]
-    days = [d for d in days if d.get("day") != day] + [entry]
-    days.sort(key=lambda d: DAYS.index(d["day"]) if d.get("day") in DAYS else 99)
-    doc_ref.set({"days": days, "updated_at": _now_iso(), "updated_by": actor})
+    client = get_firestore_client()
+    doc_ref = client.collection("store_info").document("hours")
+
+    # Read-modify-write in one transaction: two managers changing different
+    # days at the same time must not overwrite each other's change.
+    @firestore.transactional
+    def _apply(txn):
+        snap = doc_ref.get(transaction=txn)
+        days = list((snap.to_dict() or {}).get("days") or SEED_HOURS) if snap.exists else [dict(d) for d in SEED_HOURS]
+        days = [d for d in days if d.get("day") != day] + [entry]
+        days.sort(key=lambda d: DAYS.index(d["day"]) if d.get("day") in DAYS else 99)
+        txn.set(doc_ref, {"days": days, "updated_at": _now_iso(), "updated_by": actor})
+        return days
+
+    days = _apply(client.transaction())
     logger.info(f"Store hours for {day} updated by manager")
     return {"updated": entry, "days": days}
 

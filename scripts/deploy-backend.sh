@@ -14,6 +14,11 @@ KEYCLOAK_ISSUER="${KEYCLOAK_ISSUER:-https://keycloak.YOUR_KEYCLOAK_IP.nip.io/rea
 KEYCLOAK_AUDIENCE="${KEYCLOAK_AUDIENCE:-biscuit-coffee}"
 # Dedicated runtime identity with Firestore access only (roles/datastore.user).
 RUN_SA="${BACKEND_RUN_SA:-biscuit-backend-run@${PROJECT}.iam.gserviceaccount.com}"
+# Backend copy of the gateway's order rules (dollars): >= ORDER_CAP is refused,
+# >= APPROVAL_THRESHOLD waits for staff approval. Keep in step with the API
+# product attributes Apigee uses (maxOrderAmount / approval threshold).
+ORDER_CAP="${ORDER_CAP:-100.00}"
+APPROVAL_THRESHOLD="${APPROVAL_THRESHOLD:-50.00}"
 
 echo "================================================="
 echo "Deploying biscuit-coffee-backend to Cloud Run..."
@@ -30,7 +35,7 @@ gcloud run deploy biscuit-coffee-backend \
   --region="$REGION" \
   --service-account="$RUN_SA" \
   --no-allow-unauthenticated \
-  --update-env-vars="KEYCLOAK_ISSUER=${KEYCLOAK_ISSUER},KEYCLOAK_AUDIENCE=${KEYCLOAK_AUDIENCE}" \
+  --update-env-vars="KEYCLOAK_ISSUER=${KEYCLOAK_ISSUER},KEYCLOAK_AUDIENCE=${KEYCLOAK_AUDIENCE},ORDER_CAP=${ORDER_CAP},APPROVAL_THRESHOLD=${APPROVAL_THRESHOLD}" \
   --quiet
 
 echo "Backend deployment complete."
