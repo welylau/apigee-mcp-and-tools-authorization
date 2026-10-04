@@ -5,10 +5,10 @@ KEYCLOAK_CONTAINER="keycloak"
 ADMIN_USER="admin"
 # Secrets come from the environment only - never hard-code them here.
 #   KC_ADMIN_PASS='...' CLIENT_SECRET='...' [CUSTOMER_UI_URL='https://<customer-ui>.run.app'] ./setup_apigee_realm.sh
-ADMIN_PASS="YOUR_KEYCLOAK_ADMIN_PASSWORD"
+ADMIN_PASS="${KC_ADMIN_PASS:?KC_ADMIN_PASS must be set}"
 REALM_NAME="apigee-demo"
 CLIENT_ID="biscuit-coffee-agent"
-CLIENT_SECRET="YOUR_KEYCLOAK_CLIENT_SECRET"
+CLIENT_SECRET="${CLIENT_SECRET:?CLIENT_SECRET must be set}"
 DEMO_USER="customer@biscuit-coffee.com"
 DEMO_PASS="ilovecoffee"
 

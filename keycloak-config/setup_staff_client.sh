@@ -29,7 +29,7 @@ set -euo pipefail
 KC_BASE="${KC_BASE:-https://keycloak.YOUR_KEYCLOAK_IP.nip.io}"
 REALM="${REALM:-apigee-demo}"
 KC_ADMIN_USER="${KC_ADMIN_USER:-admin}"
-: "YOUR_KEYCLOAK_ADMIN_PASSWORD"
+: "${KC_ADMIN_PASS:?KC_ADMIN_PASS must be set}"
 STAFF_CLIENT_ID="${STAFF_CLIENT_ID:-biscuit-coffee-staff}"
 : "${STAFF_CLIENT_SECRET:?STAFF_CLIENT_SECRET must be set}"
 STAFF_UI_URL="${STAFF_UI_URL:-}"
