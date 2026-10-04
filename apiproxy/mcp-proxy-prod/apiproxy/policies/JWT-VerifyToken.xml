@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!--
+  Verifies the caller's Keycloak ACCESS token on the MCP gateway (signature via
+  JWKS, issuer, audience "biscuit-coffee", expiry, typ=Bearer). Same
+  idp-config property set as Biscuit-Coffee-Shop's JWT-VerifyToken.
+
+  Runs only when an Authorization header is present. The VERIFIED azp then
+  becomes the API key (VA-VerifyKey) and the VERIFIED sub the quota identifier
+  (QU-ProductQuota), so neither can be chosen by an unsigned or forged token.
+  A failure is answered by the "jwt-invalid" FaultRule with a JSON-RPC 401.
+-->
+<VerifyJWT continueOnError="false" enabled="true" name="JWT-VerifyToken">
+  <DisplayName>JWT-VerifyToken</DisplayName>
+  <Algorithm>RS256</Algorithm>
+  <PublicKey>
+    <JWKS uriRef="propertyset.idp-config.jwks_uri"/>
+  </PublicKey>
+  <Issuer ref="propertyset.idp-config.issuer"/>
+  <Audience ref="propertyset.idp-config.audience"/>
+  <AdditionalClaims>
+    <Claim name="typ">Bearer</Claim>
+  </AdditionalClaims>
+</VerifyJWT>

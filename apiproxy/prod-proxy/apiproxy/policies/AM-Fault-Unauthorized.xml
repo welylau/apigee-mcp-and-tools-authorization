@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!--
+  Generic 401 for any JWT-VerifyToken failure (missing, expired, bad
+  signature, wrong issuer/audience, ID token instead of access token).
+  The body never says which check failed: that detail stays in Apigee
+  analytics / debug, not in the client response.
+-->
+<AssignMessage continueOnError="false" enabled="true" name="AM-Fault-Unauthorized">
+  <DisplayName>AM-Fault-Unauthorized</DisplayName>
+  <AssignVariable>
+    <Name>gwfault.handled</Name>
+    <Value>true</Value>
+  </AssignVariable>
+  <Set>
+    <Headers>
+      <Header name="Content-Type">application/json</Header>
+      <Header name="WWW-Authenticate">Bearer error="invalid_token"</Header>
+    </Headers>
+    <Payload contentType="application/json">{
+  "error": "unauthorized",
+  "message": "Please sign in again: your session is missing or has expired."
+}</Payload>
+    <StatusCode>401</StatusCode>
+    <ReasonPhrase>Unauthorized</ReasonPhrase>
+  </Set>
+  <IgnoreUnresolvedVariables>true</IgnoreUnresolvedVariables>
+  <AssignTo createNew="false" transport="http" type="response"/>
+</AssignMessage>

@@ -60,6 +60,11 @@
         <!-- Pricing integrity -->
         <Policy>RF-Pricing-Unavailable</Policy>
         <Policy>IC-MenuCache</Policy>
+        <!-- Generic fault bodies (DefaultFaultRule / FaultRules) -->
+        <Policy>AM-Fault-Unauthorized</Policy>
+        <Policy>AM-Fault-OrderNotFound</Policy>
+        <Policy>AM-Fault-Upstream</Policy>
+        <Policy>AM-Fault-Generic</Policy>
     </Policies>
 
     <ProxyEndpoints>

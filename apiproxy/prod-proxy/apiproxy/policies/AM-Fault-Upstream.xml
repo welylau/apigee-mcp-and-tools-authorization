@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!--
+  Generic 502 for a failed backend call: a 5xx from Cloud Run (whose FastAPI
+  body may contain internals), a timeout, or a connection error. The backend
+  body is replaced, never passed through. Backend 4xx responses are NOT
+  faults (success.codes includes 4xx) and keep their own body.
+-->
+<AssignMessage continueOnError="false" enabled="true" name="AM-Fault-Upstream">
+  <DisplayName>AM-Fault-Upstream</DisplayName>
+  <AssignVariable>
+    <Name>gwfault.handled</Name>
+    <Value>true</Value>
+  </AssignVariable>
+  <Set>
+    <Headers>
+      <Header name="Content-Type">application/json</Header>
+    </Headers>
+    <Payload contentType="application/json">{
+  "error": "upstream_error",
+  "message": "The coffee shop service is temporarily unavailable. Please try again in a moment."
+}</Payload>
+    <StatusCode>502</StatusCode>
+    <ReasonPhrase>Bad Gateway</ReasonPhrase>
+  </Set>
+  <IgnoreUnresolvedVariables>true</IgnoreUnresolvedVariables>
+  <AssignTo createNew="false" transport="http" type="response"/>
+</AssignMessage>

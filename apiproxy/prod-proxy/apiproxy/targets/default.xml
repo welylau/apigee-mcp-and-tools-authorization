@@ -2,6 +2,16 @@
 <TargetEndpoint name="default">
   <Description>Biscuit Coffee Shop Cloud Run Backend</Description>
   <FaultRules/>
+  <!-- Backend 5xx (ErrorResponseCode) or an unreachable backend: a generic 502,
+       never the FastAPI error body. 4xx are success.codes (below) and pass
+       through to the ProxyEndpoint response flow unchanged. -->
+  <DefaultFaultRule name="upstream-fault">
+    <AlwaysEnforce>true</AlwaysEnforce>
+    <Step>
+      <Name>AM-Fault-Upstream</Name>
+      <Condition>(gwfault.handled != "true") and (fault.name != "RaiseFault")</Condition>
+    </Step>
+  </DefaultFaultRule>
   <PreFlow name="PreFlow">
     <Request>
       <Step>

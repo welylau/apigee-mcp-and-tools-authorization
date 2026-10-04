@@ -1,4 +1,17 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!--
+  Verifies the caller's Keycloak ACCESS token (signature via JWKS, issuer,
+  audience "biscuit-coffee", expiry).
+
+  typ=Bearer rejects Keycloak ID tokens (typ "ID"), which carry the same
+  issuer and, if an audience mapper adds it to the ID token, the same
+  audience. Only access tokens may call the API. The client (azp) is pinned
+  separately: JS-ResolveProduct refuses any azp without an entry in
+  azp-products.properties.
+
+  A failure raises a fault that the ProxyEndpoint FaultRule "jwt-invalid"
+  turns into a generic 401 (AM-Fault-Unauthorized).
+-->
 <VerifyJWT continueOnError="false" enabled="true" name="JWT-VerifyToken">
   <Algorithm>RS256</Algorithm>
   <PublicKey>
@@ -6,4 +19,7 @@
   </PublicKey>
   <Issuer ref="propertyset.idp-config.issuer"/>
   <Audience ref="propertyset.idp-config.audience"/>
+  <AdditionalClaims>
+    <Claim name="typ">Bearer</Claim>
+  </AdditionalClaims>
 </VerifyJWT>

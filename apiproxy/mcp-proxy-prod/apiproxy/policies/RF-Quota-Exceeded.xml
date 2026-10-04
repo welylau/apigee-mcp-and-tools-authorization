@@ -10,8 +10,10 @@
 
   Two details are load-bearing:
     * `id` MUST be echoed - mcp.types.JSONRPCError requires it, and a missing
-      id makes the client drop the response and hang. It is emitted unquoted
-      because the MCP SDK always allocates integer request ids.
+      id makes the client drop the response and hang. JS-JsonRpcId stores it
+      already JSON-encoded (numbers bare, strings quoted), hence unquoted here.
+    * The limit in the sentence is the quota's own allowed count (whichever of
+      the two Quota policies ran), so the wording follows the API Product.
     * The HTTP status stays 429 so Apigee analytics record a genuine rate-limit
       rejection. The agent installs a transport shim (see tools.py) that reads
       the body despite the non-2xx status, since the MCP SDK would otherwise
@@ -30,11 +32,11 @@
   "id": {jsonrpc.id},
   "error": {
     "code": -32029,
-    "message": "Our policy allows a maximum of 3 orders in a minute. If you need to order more than 3 times in a minute. Please reach out to our staff or wait for the next minute.",
+    "message": "Our policy allows a maximum of {ratelimit.QU-ProductQuota.allowed.count}{ratelimit.QU-ProductQuota-Header.allowed.count} orders per minute. Please wait for the next minute, or ask our staff if you need to order more.",
     "data": {
       "reason": "quota_exceeded",
       "relay_verbatim": true,
-      "enforcedBy": "Apigee API Product quota (biscuit-coffee-agent)",
+      "enforcedBy": "Apigee API Product quota ({audit.product})",
       "retry_after_seconds": 60
     }
   }
@@ -43,4 +45,5 @@
       <ReasonPhrase>Too Many Requests</ReasonPhrase>
     </Set>
   </FaultResponse>
+  <IgnoreUnresolvedVariables>true</IgnoreUnresolvedVariables>
 </RaiseFault>

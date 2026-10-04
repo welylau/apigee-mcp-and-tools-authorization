@@ -153,7 +153,8 @@ for (var j = 0; j < items.length; j++) {
     count += qty;
     if (qty > 0) {
         // Only menu names (or a fixed label for unknown ids) go into the
-        // summary, so customer-supplied text cannot shape the approval email.
+        // summary, so customer-supplied text cannot shape anything that reads
+        // order.items_summary (trace / audit).
         summary.push(qty + ' x ' + (names[item.item_id] || 'unlisted item'));
     }
 }

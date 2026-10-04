@@ -55,7 +55,8 @@ coverage.xml
 
 # Environment & Secrets
 .env
-.env.local
+.env.*
+!.env.example
 
 # Archive files
 *.zip

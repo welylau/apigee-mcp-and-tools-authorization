@@ -11,9 +11,8 @@
   roles/logging.logWriter.
 
   * API key is logged ONLY as a SHA-256 fingerprint (audit.key_fp).
-  * end_user claims here come from DecodeJWT (signature NOT verified at this
-    layer) and are flagged verified=false. The authoritative, verified end-user
-    record is written by Biscuit-Coffee-Shop.
+  * end_user claims come from JWT-VerifyToken (signature verified on this
+    proxy). They are empty for guest (no Authorization) calls.
   * audit.attributes_json is a JSON object built by JS-AuditAttributes and is
     embedded unquoted; it defaults to {}.
 -->
@@ -38,12 +37,12 @@
     "attributes": {audit.attributes_json}
   },
   "end_user": {
-    "sub": "{escapeJSON(jwt.JWT-Decode.claim.subject)}",
-    "username": "{escapeJSON(jwt.JWT-Decode.claim.preferred_username)}",
-    "email": "{escapeJSON(jwt.JWT-Decode.claim.email)}",
-    "scope": "{escapeJSON(jwt.JWT-Decode.claim.scope)}",
-    "azp": "{escapeJSON(jwt.JWT-Decode.claim.azp)}",
-    "verified": false
+    "sub": "{escapeJSON(jwt.JWT-VerifyToken.claim.subject)}",
+    "username": "{escapeJSON(jwt.JWT-VerifyToken.claim.preferred_username)}",
+    "email": "{escapeJSON(jwt.JWT-VerifyToken.claim.email)}",
+    "scope": "{escapeJSON(jwt.JWT-VerifyToken.claim.scope)}",
+    "azp": "{escapeJSON(jwt.JWT-VerifyToken.claim.azp)}",
+    "verified": "{jwt.JWT-VerifyToken.valid}"
   },
   "request": {
     "mcp_method": "{escapeJSON(mcpaudit.method)}",

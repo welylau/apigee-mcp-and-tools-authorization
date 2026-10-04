@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!--
+  Fault-path twin of RF-Order-Not-Found: used when the SC-GetOrderOwner
+  pre-flight lookup itself fails (timeout, connection error). The caller gets
+  the identical 404 status, body and wording as "not found" / "not yours", so
+  a lookup failure cannot be told apart from either (no enumeration oracle,
+  no distinguishable 500). Keep the payload in step with RF-Order-Not-Found.
+-->
+<AssignMessage continueOnError="false" enabled="true" name="AM-Fault-OrderNotFound">
+  <DisplayName>AM-Fault-OrderNotFound</DisplayName>
+  <AssignVariable>
+    <Name>gwfault.handled</Name>
+    <Value>true</Value>
+  </AssignVariable>
+  <Set>
+    <Headers>
+      <Header name="Content-Type">application/json</Header>
+    </Headers>
+    <Payload contentType="application/json">{
+  "error": "order_not_found",
+  "message": "I could not find that order on your account. Please check the order ID, or ask our staff if you think this is a mistake."
+}</Payload>
+    <StatusCode>404</StatusCode>
+    <ReasonPhrase>Not Found</ReasonPhrase>
+  </Set>
+  <IgnoreUnresolvedVariables>true</IgnoreUnresolvedVariables>
+  <AssignTo createNew="false" transport="http" type="response"/>
+</AssignMessage>

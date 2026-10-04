@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!--
+  Last-resort body for any fault not handled more specifically (DefaultFaultRule,
+  AlwaysEnforce). Replaces Apigee's default {"fault":{"faultstring":...}} body,
+  which names policies and internal errors.
+
+  Never runs over a RaiseFault (fault.name = "RaiseFault": 400/403/404/422/429/
+  503 refusals keep their own message) or over a fault another AM-Fault-*
+  policy already answered (gwfault.handled = "true").
+-->
+<AssignMessage continueOnError="false" enabled="true" name="AM-Fault-Generic">
+  <DisplayName>AM-Fault-Generic</DisplayName>
+  <AssignVariable>
+    <Name>gwfault.handled</Name>
+    <Value>true</Value>
+  </AssignVariable>
+  <Set>
+    <Headers>
+      <Header name="Content-Type">application/json</Header>
+    </Headers>
+    <Payload contentType="application/json">{
+  "error": "internal_error",
+  "message": "Something went wrong on our side. Please try again in a moment."
+}</Payload>
+    <StatusCode>500</StatusCode>
+    <ReasonPhrase>Internal Server Error</ReasonPhrase>
+  </Set>
+  <IgnoreUnresolvedVariables>true</IgnoreUnresolvedVariables>
+  <AssignTo createNew="false" transport="http" type="response"/>
+</AssignMessage>

@@ -1,7 +1,34 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <ProxyEndpoint name="default">
   <Description/>
-  <FaultRules/>
+  <!-- Generic error bodies. RaiseFault refusals (400/403/404/422/429/503)
+       keep their own messages; only unplanned faults are rewritten so that no
+       policy names, JWT details or backend bodies leak to the caller. -->
+  <FaultRules>
+    <!-- Any VerifyJWT failure (missing, expired, bad signature, wrong
+         issuer/audience, ID token) -> one generic 401. -->
+    <FaultRule name="jwt-invalid">
+      <Step>
+        <Name>AM-Fault-Unauthorized</Name>
+      </Step>
+      <Condition>(JWT.failed = true) and (gwfault.handled != "true")</Condition>
+    </FaultRule>
+    <!-- The cancelOrder ownership pre-flight could not reach the backend:
+         answer with the same 404 as "not found" / "not yours". -->
+    <FaultRule name="ownership-lookup-failed">
+      <Step>
+        <Name>AM-Fault-OrderNotFound</Name>
+      </Step>
+      <Condition>(servicecallout.SC-GetOrderOwner.failed = true) and (JWT.failed != true) and (gwfault.handled != "true")</Condition>
+    </FaultRule>
+  </FaultRules>
+  <DefaultFaultRule name="default-fault">
+    <AlwaysEnforce>true</AlwaysEnforce>
+    <Step>
+      <Name>AM-Fault-Generic</Name>
+      <Condition>(gwfault.handled != "true") and (fault.name != "RaiseFault") and (JWT.failed != true) and (servicecallout.SC-GetOrderOwner.failed != true)</Condition>
+    </Step>
+  </DefaultFaultRule>
   <PreFlow name="PreFlow">
     <Request>
       <!-- Never trust policy headers from the caller. Cap, threshold and the
@@ -142,7 +169,12 @@
     </Flow>
     <Flow name="getRewardBalance">
       <Description>Get user reward balance</Description>
-      <Request/>
+      <Request>
+        <Step>
+          <Condition>!(jwt.JWT-VerifyToken.claim.scope ~~ ".*\bbiscuit_coffee_customer\b.*")</Condition>
+          <Name>RF-Invalid-Scope</Name>
+        </Step>
+      </Request>
       <Response/>
       <Condition>(proxy.pathsuffix MatchesPath "/loyalty/balance") and (request.verb = "GET")</Condition>
     </Flow>

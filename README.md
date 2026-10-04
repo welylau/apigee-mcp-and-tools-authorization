@@ -3,7 +3,7 @@
 
 [![Apigee X](https://img.shields.io/badge/Google%20Cloud-Apigee%20X-4285F4?logo=googlecloud&logoColor=white)](https://cloud.google.com/apigee)
 [![Agent Development Kit](https://img.shields.io/badge/Google%20Cloud-Agent%20Development%20Kit%20(ADK)-34A853?logo=googlecloud&logoColor=white)](https://cloud.google.com/products/agent-development-kit)
-[![Vertex AI](https://img.shields.io/badge/Vertex%20AI-Gemini%202.5%20Flash-EA4335?logo=googlecloud&logoColor=white)](https://cloud.google.com/vertex-ai)
+[![Vertex AI](https://img.shields.io/badge/Vertex%20AI-Gemini%203.5%20Flash-EA4335?logo=googlecloud&logoColor=white)](https://cloud.google.com/vertex-ai)
 [![Keycloak](https://img.shields.io/badge/Identity-Keycloak%20OAuth%202.0%20%2F%20OIDC-red?logo=redhat&logoColor=white)](https://www.keycloak.org)
 [![Model Context Protocol](https://img.shields.io/badge/Protocol-Model%20Context%20Protocol%20(MCP)-blueviolet)](https://modelcontextprotocol.io)
 [![Cloud Run](https://img.shields.io/badge/Deployment-Cloud%20Run-4285F4?logo=googlecloud&logoColor=white)](https://cloud.google.com/run)
@@ -14,7 +14,7 @@
 
 > [!NOTE]
 > ### 💡 Enterprise AI Gateway Reference Architecture
-> This repository demonstrates how enterprises use **Google Cloud Apigee X** as an **AI Gateway** to manage, secure, monitor, and govern **Model Context Protocol (MCP)** tool calling by autonomous GenAI agents built with the **Google Agent Development Kit (ADK)** and powered by **Gemini 2.5 Flash**.
+> This repository demonstrates how enterprises use **Google Cloud Apigee X** as an **AI Gateway** to manage, secure, monitor, and govern **Model Context Protocol (MCP)** tool calling by autonomous GenAI agents built with the **Google Agent Development Kit (ADK)** and powered by **Gemini 3.5 Flash** (`MODEL_NAME`).
 >
 > It features **3-legged OAuth 2.0 / OIDC identity propagation (Keycloak)**, **JSON-RPC to REST MCP protocol transcoding (`ParsePayload`)**, **granular Role-Based Access Control (RBAC)**, and a **zero-trust Cloud Run backend architecture**.
 
@@ -102,9 +102,9 @@ Both apps open the Keycloak login pop-up with `prompt=login`, so each app always
 | Realm role | `staff` (managers hold `manager` + `staff`) |
 | Client scope | `biscuit_coffee_staff`, role-gated to `staff`. `biscuit_coffee_manager` is role-gated to `manager` |
 | Staff client | `biscuit-coffee-staff`, audience `biscuit-coffee`, default scopes `biscuit_coffee_staff` + `biscuit_coffee_manager` |
-| Demo users (password `ilovecoffee`) | `staff@biscuit-coffee.com` (Sam Barista, staff), `manager@biscuit-coffee.com` (store manager), `customer@`, `customer2@`, `customer3@biscuit-coffee.com` (customers) |
+| Demo users (password `ilovecoffee`) | `staff@biscuit-coffee.com` (Sam Barista, staff), `manager@biscuit-coffee.com` (store manager), `customer@`, `customer2@biscuit-coffee.com` (customers) |
 
-The token's `azp` claim (the Keycloak client id) is the Apigee API key: `mcp-proxy-prod` verifies the key from `azp`. That way a staff token can only reach the staff product, and a customer token only the customer product.
+The token's `azp` claim (the Keycloak client id) is the Apigee API key: `mcp-proxy-prod` verifies the JWT first and then uses the **verified** `azp` as the key. That way a staff token can only reach the staff product, and a customer token only the customer product. A request without a token may only use the public customer key (guest tools); the staff key is refused without a staff token.
 
 ### Staff tools and permissions
 
@@ -129,7 +129,7 @@ The staff agent and the staff UI panels call these MCP tools on `https://<APIGEE
 
 The ADK container runs `adk web` over `biscuit-coffee/python/agents/`, so one Cloud Run service (`apigee-coffee-shop-adk`) serves both apps; `GET /list-apps` returns `["coffee_agent_prod", "coffee_agent_staff"]`. Shared code (Apigee header provider, MCP 429/401/403 passthrough, gateway-message relay) lives in `agents/biscuit_common.py`. It is a module file, not a folder, so ADK does not list it as an app.
 
-* `coffee_agent_prod`: tool filter = customer tools only (`getMenu`, `getStoreLocation`, `getHoursOfOperation`, `placeOrder`, `getOrder`, `listOrders`, `cancelOrder`, `signUpLoyalty`, `getRewardBalance`, payment tools). No employee or staff tools.
+* `coffee_agent_prod`: tool filter = customer tools only (`getMenu`, `getStoreLocation`, `getHoursOfOperation`, `placeOrder`, `getOrder`, `listOrders`, `cancelOrder`, `signUpLoyalty`, `getRewardBalance`). No employee or staff tools.
 * `coffee_agent_staff`: tool filter = the staff tools above. Its instructions depend on the role in the token (manager / staff / not signed in). It asks for confirmation before rejecting or cancelling an order, changing a price, marking an item sold out or changing hours. It relays Apigee refusals word for word (e.g. a barista asking for employees gets the gateway's 403 message).
 
 Reaching the staff agent alone gives nothing: every tool call still needs a staff token, and Apigee checks it.
@@ -155,7 +155,7 @@ sequenceDiagram
     actor User as User (Guest / Customer / Staff / Manager)
     participant UI as Web UI (customer :3000 or staff :3001)
     participant KC as Keycloak IdP (OAuth 2.0)
-    participant ADK as Google ADK Agent (Gemini 2.5)
+    participant ADK as Google ADK Agent (Gemini 3.5 Flash)
     participant GW as Apigee X AI Gateway
     participant CR as Backend (Cloud Run + Firestore)
 
@@ -214,10 +214,10 @@ The architecture defines four user tiers enforced deterministically at the Apige
 | **OAuth 2.0 Scope** | *JWT Claims* | *None* | `biscuit_coffee_customer` | `biscuit_coffee_staff` | `biscuit_coffee_staff`<br/>`biscuit_coffee_manager` | Keycloak OpenID Connect Realm |
 | **Browse Menu & Pricing** | `GET /menu` | ✅ **Allowed** | ✅ **Allowed** | ✅ **Allowed** | ✅ **Allowed** | Public Ingress Flow (`PreFlow Bypass`) |
 | **Store Hours & Location** | `GET /hours`, `GET /location` | ✅ **Allowed** | ✅ **Allowed** | ✅ **Allowed** | ✅ **Allowed** | Public Ingress Flow (`PreFlow Bypass`) |
-| **Check Rewards Balance** | `GET /loyalty/balance` | ❌ *Login Required* | ✅ **Allowed** | ➖ *Not in staff app* | ➖ *Not in staff app* | `JWT-VerifyToken` + Email Identity Check |
+| **Check Rewards Balance** | `GET /loyalty/balance` | ❌ *Login Required* | ✅ **Allowed** | ➖ *Not in staff app* | ➖ *Not in staff app* | `JWT-VerifyToken` + Scope: `customer` |
 | **Sign Up for Rewards** | `POST /loyalty/signup` | ❌ *Login Required* | ✅ **Allowed** | ➖ | ➖ | `JWT-VerifyToken` + Scope: `customer` |
 | **Place New Order** | `POST /orders` | ❌ *Login Required* | ✅ **Allowed** | ➖ | ➖ | `JWT-VerifyToken` + Scope: `customer` |
-| **Track / Cancel Own Order** | `GET` / `DELETE /orders/{order_id}` | ❌ *Login Required* | ✅ **Allowed** (own orders only) | ➖ | ➖ | `JWT-VerifyToken` + User Order Filter |
+| **Track / Cancel Own Order** | `GET` / `DELETE /orders/{order_id}` | ❌ *Login Required* | ✅ **Allowed** (own orders only) | ➖ | ➖ | `JWT-VerifyToken` + ownership check (uniform 404) |
 | **All Orders, Approve / Reject, Order Progress** | `/staff/orders/...` | ❌ | ❌ *Not in customer product* | ✅ **Allowed** | ✅ **Allowed** | Staff product + Scope: `staff` or `manager` |
 | **List Store Employees** | `GET /employees` | ❌ **BLOCKED** | ❌ *Not in customer agent* | ❌ **BLOCKED (403 Forbidden)** | ✅ **Allowed (200 OK)** | `RF-Invalid-Scope` (`biscuit_coffee_manager`) |
 | **Store Ops (hours, prices, sold out, stats)** | `/staff/store/hours`, `/staff/menu/{id}`, `/staff/stats` | ❌ | ❌ | ❌ **BLOCKED (403 Forbidden)** | ✅ **Allowed** | Scope: `biscuit_coffee_manager` |
@@ -225,18 +225,34 @@ The architecture defines four user tiers enforced deterministically at the Apige
 
 ### Under the Hood: Apigee Security Policies
 
+#### Security model at a glance
+
+| Layer | Control |
+| :--- | :--- |
+| Keycloak | Exact redirect URIs per client, Authorization Code + PKCE, `prompt=login`; access tokens carry audience `biscuit-coffee` |
+| `mcp-proxy-prod` | Verifies the JWT (`JWT-VerifyToken`); API key = verified `azp`; guests (no token) may use the public customer key only; per-tool product quota per user (`placeOrder`: 3/min per verified `sub`); CORS limited to the two UI origins |
+| `Biscuit-Coffee-Shop` | Verifies the JWT (access tokens only, `typ=Bearer`); strips caller-supplied policy headers; resolves the API Product from the verified `azp` (`azp-products.properties`) and reads its attributes (`maxOrderAmount`, `approvalThreshold`, `enforceOrderOwnership`) itself; SpikeArrest 30/min per user; `placeOrder` 5/min per user; scope checks per operation; order ownership with one uniform 404 |
+| Pricing | Fails closed: if the menu cannot be priced, `placeOrder` is refused (503) instead of priced with fallbacks |
+| Errors | Planned refusals keep their message (400/403/404/422/429/503); anything else gets a generic `{error, message}` body (401 for bad tokens, 502 for backend failures) with no policy or backend details |
+| Backend (Cloud Run) | Private (IAM invoker = Apigee SA); re-verifies the forwarded user JWT (`X-User-Token`) and repeats the scope checks |
+| Web UI | Backend-for-frontend: the browser never calls the ADK API directly, the BFF locks it to the signed-in session; strict Content-Security-Policy |
+
 #### 1. JWT Signature Verification (`JWT-VerifyToken`)
-Apigee dynamically verifies incoming Bearer tokens against Keycloak's JSON Web Key Set (JWKS):
+Apigee verifies incoming Bearer tokens against Keycloak's JSON Web Key Set (JWKS). The JWKS URI, issuer and audience come from the proxy property set `idp-config.properties`:
 ```xml
-<VerifyJWT name="JWT-VerifyToken">
-    <Algorithm>RS256</Algorithm>
-    <Source>request.header.Authorization</Source>
-    <PublicKey>
-        <JWKS ref="idp.jwks_uri"/>
-    </PublicKey>
-    <Issuer ref="idp.issuer"/>
+<VerifyJWT continueOnError="false" enabled="true" name="JWT-VerifyToken">
+  <Algorithm>RS256</Algorithm>
+  <PublicKey>
+    <JWKS uriRef="propertyset.idp-config.jwks_uri"/>
+  </PublicKey>
+  <Issuer ref="propertyset.idp-config.issuer"/>
+  <Audience ref="propertyset.idp-config.audience"/>
+  <AdditionalClaims>
+    <Claim name="typ">Bearer</Claim>
+  </AdditionalClaims>
 </VerifyJWT>
 ```
+`typ=Bearer` rejects Keycloak ID tokens, so only access tokens can call the API. Any failure returns one generic 401.
 
 #### 2. Conditional Scope Enforcement (`RF-Invalid-Scope`)
 Before routing to the employee roster or sensitive managerial APIs, Apigee checks whether the token includes the `biscuit_coffee_manager` scope:
@@ -312,14 +328,14 @@ The demo includes a modern, responsive web application designed with the **Googl
 │   ├── prod-proxy/                       # Biscuit-Coffee-Shop REST API Proxy
 │   │   └── apiproxy/
 │   │       ├── Biscuit-Coffee-Shop.xml   # Proxy bundle definition
-│   │       ├── policies/                 # JWT-VerifyToken, RF-Invalid-Scope, EV-GetId
+│   │       ├── policies/                 # JWT-VerifyToken, RF-*, JS-CheckOrderValue, AM-Fault-*
 │   │       ├── proxies/default.xml       # Flow rules and conditional scope checks
-│   │       ├── resources/properties/     # Keycloak JWKS & issuer configuration
+│   │       ├── resources/properties/     # idp-config (JWKS, issuer, audience), azp-products
 │   │       └── targets/default.xml       # Target endpoint pointing to Cloud Run
 │   └── mcp-proxy-prod/                   # Model Context Protocol (MCP) Gateway Proxy
 │       └── apiproxy/
 │           ├── mcp-proxy-prod.xml        # MCP proxy bundle definition
-│           ├── policies/                 # PP-ParseMCPTools, VA-VerifyKey, JWT-Decode
+│           ├── policies/                 # PP-ParseMCPTools, JWT-VerifyToken, VA-VerifyKey, QU-ProductQuota
 │           └── proxies/default.xml       # JSON-RPC 2.0 routing & key verification
 │
 ├── biscuit-coffee/                       # Google Agent Development Kit (ADK) service (one service, two agents)
@@ -357,7 +373,7 @@ The demo includes a modern, responsive web application designed with the **Googl
 │   ├── deploy-ui.sh                      # Deploys a web UI to Cloud Run: `customer` (default) or `staff`
 │   ├── deploy-adk.sh                     # Deploys the ADK web service (both agents) to Cloud Run
 │   ├── test-dev-audit.py                 # Dev-environment test harness (quota, large order, roles)
-│   └── undeploy-apigee.sh                # Cleans up Apigee proxies and developer apps
+│   └── undeploy-apigee.sh                # Removes the prod Apigee proxies, apps, keys, developers & products
 │
 ├── web-ui/                               # Demonstration Web Application (customer + staff variants)
 │   ├── index.html                        # Split-panel single page application
@@ -387,7 +403,7 @@ This solution combines Google Cloud enterprise services with open-source identit
 | :--- | :--- | :--- |
 | **Apigee X** | **Core AI Gateway & Security Boundary**.<br/>• Exposes Model Context Protocol (MCP) server endpoints to AI agents.<br/>• Transcodes JSON-RPC 2.0 MCP tool calls into backend REST calls (`PP-ParseMCPTools`).<br/>• Enforces 3-legged OAuth 2.0 JWT signature verification (`JWT-VerifyToken`) and RBAC scopes (`RF-Invalid-Scope`).<br/>• Mints Google Cloud IAM tokens for zero-trust backend communication. | Requires an active Apigee X organization with external Application Load Balancer ingress. |
 | **Google Agent Development Kit (ADK)** | **AI Agent Framework**.<br/>• Orchestrates two agents in one service: `coffee_agent_prod` (customer) and `coffee_agent_staff` (staff / store manager), each with dynamic system instructions (`get_instruction`) and a tool filter.<br/>• Connects via `McpToolset` streaming HTTP connection to Apigee's `/mcp` proxy.<br/>• Injects user Bearer tokens dynamically into MCP headers (`header_provider`). | Python 3.10+ package (`google-adk`). |
-| **Vertex AI (Gemini 2.5 Flash)** | **Large Language Model (LLM)**.<br/>• Provides natural language understanding, reasoning, and autonomous tool-calling decisions for the coffee shop assistant. | Accessed via Vertex AI Model Garden (`aiplatform.googleapis.com`). |
+| **Vertex AI (Gemini 3.5 Flash)** | **Large Language Model (LLM)**.<br/>• Provides natural language understanding, reasoning, and autonomous tool-calling decisions for the coffee shop assistant. | Accessed via Vertex AI Model Garden (`aiplatform.googleapis.com`). |
 | **Google Cloud Run** | **Serverless Compute Platform**.<br/>• Hosts the private Python backend microservice (`biscuit-coffee-backend`).<br/>• (Optionally) hosts the containerized web UIs (`apigee-coffee-shop-ui`, `apigee-coffee-shop-staff-ui`) and the ADK service (`apigee-coffee-shop-adk`). | Requires `run.googleapis.com` enabled. Fully managed container execution. |
 | **Google Cloud Firestore** | **Serverless NoSQL Database**.<br/>• Persists customer order records, loyalty member balances, and coffee catalog inventory. | Default Firestore database in Datastore or Native mode. |
 | **Google Cloud IAM** | **Zero-Trust Service Identity**.<br/>• Restricts Cloud Run backend access exclusively to requests authenticated with Apigee X service account identity tokens. | Cloud Run Invoker (`roles/run.invoker`) role binding. |
@@ -473,10 +489,15 @@ Edit `.env` with your project and environment details:
 # Google Cloud Configuration
 GOOGLE_GENAI_USE_VERTEXAI="TRUE"
 GOOGLE_CLOUD_PROJECT="your-gcp-project-id"
-GOOGLE_CLOUD_LOCATION="asia-southeast1"
-MODEL_NAME="gemini-3.5-flash-lite"
+# GOOGLE_CLOUD_LOCATION = Vertex AI (Gemini) location;
+# GOOGLE_CLOUD_REGION = Cloud Run region used by the deploy scripts.
+GOOGLE_CLOUD_LOCATION="global"
+GOOGLE_CLOUD_REGION="asia-southeast1"
+MODEL_NAME="gemini-3.5-flash"
 
-# Apigee Environment & Hostname
+# Apigee Environments & Hostnames
+APIGEE_DEV_ENV="default-dev"
+APIGEE_DEV_HOSTNAME="dev.your-apigee-domain.com"
 APIGEE_PROD_ENV="prod-env"
 APIGEE_PROD_HOSTNAME="prod.your-apigee-domain.com"
 
@@ -510,10 +531,15 @@ docker run -d --name keycloak -p 8080:8080 \
   quay.io/keycloak/keycloak:24.0.1 start-dev
 ```
 
-Execute the automated realm configuration script:
+Execute the automated realm configuration script. It reads the Keycloak admin password and the new client secret from the environment (nothing is hard-coded):
 ```bash
+# Prompts keep both secrets out of shell history.
+read -rs KC_ADMIN_PASS; export KC_ADMIN_PASS
+read -rs CLIENT_SECRET; export CLIENT_SECRET
+# Optional: CUSTOMER_UI_URL=https://apigee-coffee-shop-ui-xxxx.run.app adds the Cloud Run redirect URI
 bash ./keycloak-config/setup_apigee_realm.sh
 ```
+Put the same client secret in your local `.env` as `KEYCLOAK_CLIENT_SECRET`.
 
 > [!TIP]
 > This script automatically configures:
@@ -522,7 +548,7 @@ bash ./keycloak-config/setup_apigee_realm.sh
 > 3. OAuth 2.0 Client: `biscuit-coffee-agent`
 > 4. Customer User: `customer@biscuit-coffee.com` (password: `ilovecoffee`) with customer scope.
 > 5. Store Manager User: `manager@biscuit-coffee.com` (password: `ilovecoffee`) with the `manager` role. Managers sign in to the **staff app** (the customer app refuses them); `setup_staff_client.sh` below adds the `staff` role.
-> 6. Extra Customer Users: `customer2@biscuit-coffee.com` (Michael, used by the tour's order-ownership mission) and `customer3@biscuit-coffee.com` (password: `ilovecoffee`) with customer scope.
+> 6. Extra Customer User: `customer2@biscuit-coffee.com` (Michael, password: `ilovecoffee`, used by the tour's order-ownership mission) with customer scope.
 
 Then add the staff app identities (additive only: the customer client and its scopes are not touched):
 ```bash
@@ -757,16 +783,21 @@ Run both apps (Step 6) and put two browser windows next to each other: **custome
 To remove all deployed Apigee assets and clean up your environment:
 
 ```bash
-# Undeploy proxies, products, and developer apps from Apigee
+# Undeploy and delete the prod proxies, developer apps (incl. the staff key), developers and the three API products
 bash ./scripts/undeploy-apigee.sh
 ```
 
-To delete the backend Cloud Run service:
+To delete the Cloud Run services (backend, both web UIs, ADK) and the UI secrets:
 ```bash
-gcloud run services delete biscuit-coffee-backend \
-  --project="$GOOGLE_CLOUD_PROJECT" \
-  --region="$GOOGLE_CLOUD_LOCATION" \
-  --quiet
+for svc in biscuit-coffee-backend apigee-coffee-shop-ui apigee-coffee-shop-staff-ui apigee-coffee-shop-adk; do
+  gcloud run services delete "$svc" \
+    --project="$GOOGLE_CLOUD_PROJECT" \
+    --region="${GOOGLE_CLOUD_REGION:-asia-southeast1}" \
+    --quiet
+done
+for secret in keycloak-client-secret keycloak-staff-client-secret; do
+  gcloud secrets delete "$secret" --project="$GOOGLE_CLOUD_PROJECT" --quiet
+done
 ```
 
 To stop the local Keycloak container:

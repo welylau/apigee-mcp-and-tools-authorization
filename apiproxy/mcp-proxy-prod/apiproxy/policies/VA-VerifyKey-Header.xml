@@ -1,5 +1,11 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!--
+  Guest path (no Authorization header): the key comes from x-api-key.
+  RF-Guest-Key-Not-Allowed has already refused every key except the public
+  customer key, so this can only resolve the public-tools product.
+-->
 <VerifyAPIKey continueOnError="false" enabled="true" name="VA-VerifyKey-Header">
+  <DisplayName>VA-VerifyKey-Header</DisplayName>
   <Properties/>
   <APIKey ref="request.header.x-api-key"/>
 </VerifyAPIKey>
