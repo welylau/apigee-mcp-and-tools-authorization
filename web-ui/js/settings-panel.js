@@ -17,6 +17,8 @@ const EVENT_META = {
   quota_exceeded: { label: 'Quota exceeded', color: 'var(--apigee-orange)', short: '429 quota' },
   order_limit_exceeded: { label: 'Large order blocked', color: 'var(--danger)', short: '422 > $100' },
   jwt_access: { label: 'JWT access', color: 'var(--google-blue)', short: 'JWT' },
+  approval_required: { label: 'Pending staff approval', color: 'var(--warning)', short: 'approval' },
+  approval_trigger_failed: { label: 'Approval request failed (legacy)', color: 'var(--google-yellow)', short: 'approval failed' },
 };
 const ROLE_COLORS = {
   customer: 'var(--role-customer)',

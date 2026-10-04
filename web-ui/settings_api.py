@@ -49,7 +49,11 @@ RANGES = {
     "7d": (timedelta(days=7), timedelta(hours=6)),
     "30d": (timedelta(days=30), timedelta(days=1)),
 }
-EVENTS = ("quota_exceeded", "order_limit_exceeded", "jwt_access")
+EVENTS = ("quota_exceeded", "order_limit_exceeded", "jwt_access",
+          # Human-in-the-loop order approval. approval_trigger_failed is legacy
+          # (the Application Integration call was removed) but kept so older
+          # log entries can still be filtered.
+          "approval_required", "approval_trigger_failed")
 PAGE_SIZES = (10, 25, 50)
 MAX_ENTRIES = 5000          # hard cap per range snapshot (5 x 1000 API pages)
 LOG_CACHE_TTL = 30          # seconds

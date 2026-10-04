@@ -344,6 +344,8 @@
 .ev-badge.quota_exceeded { background: var(--apigee-subtle); color: var(--apigee-orange); }
 .ev-badge.order_limit_exceeded { background: var(--danger-bg); color: var(--danger); }
 .ev-badge.jwt_access { background: var(--google-blue-subtle); color: var(--google-blue); }
+.ev-badge.approval_required { background: var(--warning-bg); color: var(--warning); }
+.ev-badge.approval_trigger_failed { background: var(--danger-bg); color: var(--warning); }
 .status-pill { font-family: var(--font-mono); font-size: 11px; font-weight: 700; padding: 1px 6px; border-radius: var(--radius-xs); }
 .status-pill.ok { color: var(--success); background: var(--success-bg); }
 .status-pill.warn { color: var(--warning); background: var(--warning-bg); }

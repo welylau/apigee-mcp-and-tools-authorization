@@ -1419,6 +1419,31 @@ body.is-resizing-sidebar iframe {
   border: 1px solid rgba(251, 191, 36, 0.35);
 }
 
+/* Order waiting for store-manager approval (human-in-the-loop). */
+.tool-status-tag.pending {
+  background: var(--warning-bg);
+  color: var(--warning);
+  border: 1px solid var(--warning-border);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  animation: pendingPulse 1.8s ease-in-out infinite;
+}
+
+[data-theme="dark"] .tool-status-tag.pending {
+  background: rgba(217, 119, 6, 0.18);
+  color: #fbbf24;
+  border: 1px solid rgba(251, 191, 36, 0.35);
+}
+
+@keyframes pendingPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tool-status-tag.pending { animation: none; }
+}
+
 .tool-status-tag.auth-required {
   background: rgba(234, 67, 53, 0.12);
   color: #ea4335;

@@ -67,10 +67,10 @@ export class GuidedTour {
               <span class="tour-choice-badge">Recommended</span>
               <span class="tour-choice-icon">🗺️</span>
               <span class="tour-choice-title">Guided Tour</span>
-              <span class="tour-choice-meta">${MISSIONS.filter((m) => !m.bonus).length} short missions + bonus · about 10 min</span>
+              <span class="tour-choice-meta">${MISSIONS.filter((m) => !m.bonus).length} short missions · about 12 min</span>
               <ul class="tour-choice-list">
                 <li>Public vs logged-in access</li>
-                <li>Role-based blocking (403)</li>
+                <li>Least-privilege tools and order approval</li>
                 <li>Order limits and rate limits</li>
                 <li>Audit logs in Cloud Logging</li>
               </ul>
@@ -274,7 +274,7 @@ export class GuidedTour {
       <ul class="tour-exp-summary">
         <li>Turn MCP requests into REST calls for existing APIs</li>
         <li>Pass the user's Keycloak identity through the agent</li>
-        <li>Block tools by role (403) and by object owner (404)</li>
+        <li>Expose only the tools in each app's API Product, and block other users' orders (404)</li>
         <li>Enforce order-value limits (422) and per-tool quotas (429)</li>
         <li>Send an audit trail to Cloud Logging</li>
       </ul>
@@ -293,11 +293,6 @@ export class GuidedTour {
   // ------------------------------------------------------------------ events
   onToolResult({ toolCall, text }) {
     if (!this.state.active) return;
-    // Remember an order ID seen as John - used by the bonus ownership mission.
-    if (this.persona === 'customer' && !this.state.ctx.orderId) {
-      const m = String(text || '').match(/\border\s*(?:id|number|#)?\s*(?:is|:|#)?\s*#?(\d{4,})/i);
-      if (m) this.state.ctx.orderId = m[1];
-    }
     const s = this.step;
     if (this.mode !== 'step' || !s) { this.save(); return; }
     if (s.onResult) s.onResult(toolCall, text, this.state.ctx);

@@ -7,6 +7,16 @@
 import { simulateAgentResponse } from './mock-agent.js';
 
 export class AdkAgentClient {
+  /** Display name for demo accounts whose token carries no name claim. */
+  static fallbackName(email) {
+    const e = String(email || '');
+    if (e.includes('manager')) return 'Alice (Manager)';
+    if (e.startsWith('staff')) return 'Sam Barista';
+    if (e.includes('customer2')) return 'Michael Bosh';
+    if (e.includes('customer')) return 'John Smith';
+    return e;
+  }
+
   generateGuestId() {
     return 'guest_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
   }
@@ -152,8 +162,17 @@ export class AdkAgentClient {
         // Token explicitly revoked or expired upstream
         this.clearStoredToken(userId);
         return null;
+      } else if (res.status === 403) {
+        // The BFF's role gate refused this user for this app variant (e.g. a
+        // store manager in the customer app). Drop the token; app.js shows why.
+        const body = await res.json().catch(() => ({}));
+        if (body && body.error === 'role_not_allowed') {
+          this.lastGateMessage = body.message || 'This account cannot use this app.';
+          this.clearStoredToken(userId);
+          return null;
+        }
       }
-      // If 403 or other non-401 status, do NOT wipe valid unexpired local token
+      // Other non-401 statuses: do NOT wipe a valid unexpired local token
     } catch (e) {
       // Offline fallback: keep token active if unexpired
     }
@@ -191,20 +210,16 @@ export class AdkAgentClient {
 
     const targetEmail = claims.email || idClaims.email || claims.preferred_username || idClaims.preferred_username || previous?.userinfo?.email || 'customer@biscuit-coffee.com';
     let targetName = claims.name || idClaims.name || claims.preferred_username || idClaims.preferred_username || targetEmail;
-    if (targetEmail.includes('manager') && targetName === targetEmail) {
-      targetName = 'Alice (Manager)';
-    } else if (targetEmail.includes('customer2') && targetName === targetEmail) {
-      targetName = 'Michael Bosh';
-    } else if (targetEmail.includes('customer') && targetName === targetEmail) {
-      targetName = 'John Smith';
-    }
+    if (targetName === targetEmail) targetName = AdkAgentClient.fallbackName(targetEmail);
 
     // Determine scopes from tokens.scope, claims.scope, or realm_access roles
     let tokenScopes = tokens.scope || claims.scope || '';
     const realmRoles = claims.realm_access?.roles || [];
     if (!tokenScopes) {
-      if (realmRoles.includes('biscuit_coffee_manager') || targetEmail.includes('manager')) {
-        tokenScopes = 'biscuit_coffee_customer biscuit_coffee_manager';
+      if (realmRoles.includes('biscuit_coffee_manager') || realmRoles.includes('manager')) {
+        tokenScopes = 'biscuit_coffee_staff biscuit_coffee_manager';
+      } else if (realmRoles.includes('staff')) {
+        tokenScopes = 'biscuit_coffee_staff';
       } else {
         tokenScopes = 'biscuit_coffee_customer';
       }
@@ -236,7 +251,8 @@ export class AdkAgentClient {
 
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
-      throw new Error(err.error_description || err.error || `Keycloak token exchange failed (HTTP ${res.status})`);
+      if (err && err.error === 'role_not_allowed') this.lastGateMessage = err.message;
+      throw new Error(err.message || err.error_description || err.error || `Keycloak token exchange failed (HTTP ${res.status})`);
     }
 
     const tokens = await res.json();
@@ -279,6 +295,10 @@ export class AdkAgentClient {
         });
 
         if (!res.ok) {
+          if (res.status === 403) {
+            const err = await res.json().catch(() => ({}));
+            if (err && err.error === 'role_not_allowed') this.lastGateMessage = err.message;
+          }
           this.clearStoredToken(userId);
           return null;
         }
@@ -435,7 +455,7 @@ export class AdkAgentClient {
       // is about to be handed to the agent for a call through Apigee.
       const activeToken = isGuest ? null : await this.ensureFreshToken(this.userId);
       const userEmail = isGuest ? this.userId : (activeToken?.userinfo?.email || this.userId);
-      const userName = isGuest ? '' : (activeToken?.userinfo?.name || (userEmail.includes('manager') ? 'Alice (Manager)' : (userEmail.includes('customer2') ? 'Michael Bosh' : 'John Smith')));
+      const userName = isGuest ? '' : (activeToken?.userinfo?.name || AdkAgentClient.fallbackName(userEmail));
 
       const runPayload = {
         appName: this.appName,
@@ -694,7 +714,7 @@ export class AdkAgentClient {
 
     const activeToken = this.getStoredToken(this.userId);
     const userEmail = activeToken?.userinfo?.email || this.userId;
-    const userName = activeToken?.userinfo?.name || (userEmail.includes('manager') ? 'Alice (Manager)' : (userEmail.includes('customer2') ? 'Michael Bosh' : (userEmail.includes('customer') ? 'John Smith' : '')));
+    const userName = activeToken?.userinfo?.name || AdkAgentClient.fallbackName(userEmail);
 
     const runPayload = {
       appName: this.appName,
@@ -889,6 +909,31 @@ export class AdkAgentClient {
       };
     }
 
+    // --- Human-in-the-loop: order accepted but waiting for manager approval ---
+    // AM-OrderConfirmation adds a machine-readable `status`; the sentence is
+    // owned by Apigee and may change, so it is not parsed here.
+    if (toolName === 'placeOrder' && innerText) {
+      let body = null;
+      try {
+        body = JSON.parse(innerText);
+      } catch (e) {
+        body = null;
+      }
+      if (body && body.order_id && body.status === 'PENDING_APPROVAL') {
+        return {
+          status: 'PENDING',
+          statusClass: 'pending',
+          success: true,
+          isPendingApproval: true,
+          pendingOrderId: String(body.order_id),
+          endpoint: 'Apigee → Biscuit-Coffee-Shop → POST /orders',
+          policy: 'JS-CheckOrderValue → PENDING_APPROVAL (staff approval in Staff app)',
+          enforcedBy: 'approvalThreshold attribute on the placeOrder API Product operation',
+          scopeRequired: 'biscuit_coffee_customer'
+        };
+      }
+    }
+
     return { status: '200 OK', statusClass: 'success', success: true };
   }
 
@@ -998,10 +1043,11 @@ export class AdkAgentClient {
     // Surface whichever one the gateway actually blocked - that is the whole
     // point of the card - and otherwise the last call made.
     const blocked = calls.find(c => c.success === false);
-    const toolCall = authCall || blocked || calls[calls.length - 1] || null;
+    const pending = calls.find(c => c.isPendingApproval);
+    const toolCall = authCall || blocked || pending || calls[calls.length - 1] || null;
 
     if (toolCall && toolCall.isAuth) {
-      combinedText = `🔒 **Keycloak Authentication Required**\n\nThe AI Agent requires 3-legged OAuth authorization to execute tools on the Biscuit Coffee Apigee Gateway.\n\nPlease click the **Login** button below to authenticate.\n\n• **Customer 1 (John Smith)**: \`customer@biscuit-coffee.com\` (password: \`ilovecoffee\`)\n• **Customer 2 (Michael Bosh)**: \`customer2@biscuit-coffee.com\` (password: \`ilovecoffee\`)\n• **Store Manager (Alice)**: \`manager@biscuit-coffee.com\` (password: \`ilovecoffee\`)`;
+      combinedText = `🔒 **Keycloak Authentication Required**\n\nThe AI Agent requires 3-legged OAuth authorization to execute tools on the Biscuit Coffee Apigee Gateway.\n\nPlease click the **Login** button below to authenticate.\n\n• **Customer 1 (John Smith)**: \`customer@biscuit-coffee.com\` (password: \`ilovecoffee\`)\n• **Customer 2 (Michael Bosh)**: \`customer2@biscuit-coffee.com\` (password: \`ilovecoffee\`)`;
     } else if (!combinedText && relayText) {
       combinedText = relayText;
     } else if (!combinedText) {

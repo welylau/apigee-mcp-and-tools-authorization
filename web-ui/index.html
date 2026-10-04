@@ -42,6 +42,7 @@
   <link rel="stylesheet" href="css/style.css">
   <link rel="stylesheet" href="css/settings.css">
   <link rel="stylesheet" href="css/tour.css">
+  <link rel="stylesheet" href="css/staff.css">
 </head>
 <body>
   <div class="app-container">
@@ -103,7 +104,8 @@
 
       <!-- Status, Header Auth & Theme -->
       <div class="header-actions">
-        <button type="button" class="header-tour-btn" id="headerTourBtn" title="Open the interactive Guided Tour">
+        <span class="staff-role-badge" id="staffRoleBadge" data-variant-only="staff" hidden></span>
+        <button type="button" class="header-tour-btn" id="headerTourBtn" data-variant-only="customer" title="Open the interactive Guided Tour">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
             <polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"></polygon>
             <line x1="8" y1="2" x2="8" y2="18"></line>
@@ -136,7 +138,7 @@
           </svg>
         </button>
 
-        <button type="button" class="settings-open-btn" id="settingsOpenBtn" title="Settings: hosting info &amp; consumer audit logs" aria-haspopup="dialog" aria-controls="settingsDrawer" aria-expanded="false">
+        <button type="button" class="settings-open-btn" id="settingsOpenBtn" data-variant-only="staff" data-role-only="manager" title="Settings: hosting info &amp; consumer audit logs" aria-haspopup="dialog" aria-controls="settingsDrawer" aria-expanded="false">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <circle cx="12" cy="12" r="3"></circle>
             <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
@@ -198,7 +200,7 @@
 
         <div class="role-cards-container">
           <!-- PUBLIC (UNAUTHENTICATED) SPEC CARD -->
-          <div class="role-spec-box" id="publicSpecBox">
+          <div class="role-spec-box" id="publicSpecBox" data-variant-only="customer">
             <div class="spec-title-row">
               <div class="spec-role-label public">
                 <span>🌐</span>
@@ -239,7 +241,7 @@
           </div>
 
           <!-- CUSTOMER SPEC CARD (John Smith) -->
-          <div class="role-spec-box" id="customerSpecBox">
+          <div class="role-spec-box" id="customerSpecBox" data-variant-only="customer">
             <div class="spec-title-row">
               <div class="spec-role-label customer">
                 <span>👤</span>
@@ -292,7 +294,7 @@
           </div>
 
           <!-- CUSTOMER 2 SPEC CARD (Michael Bosh) -->
-          <div class="role-spec-box" id="customer2SpecBox">
+          <div class="role-spec-box" id="customer2SpecBox" data-variant-only="customer">
             <div class="spec-title-row">
               <div class="spec-role-label customer">
                 <span>👤</span>
@@ -344,8 +346,45 @@
             </div>
           </div>
 
-          <!-- STORE MANAGER SPEC CARD -->
-          <div class="role-spec-box" id="managerSpecBox">
+          <!-- STAFF APP: Staff (barista) capabilities -->
+          <div class="role-spec-box" id="staffSpecBox" data-variant-only="staff">
+            <div class="spec-title-row">
+              <div class="spec-role-label customer">
+                <span>🧑‍🍳</span>
+                <div class="spec-role-titles">
+                  <span class="spec-role-name">Staff (Sam Barista)</span>
+                  <span class="spec-role-email">staff@biscuit-coffee.com</span>
+                </div>
+              </div>
+              <span class="spec-badge">biscuit_coffee_staff</span>
+            </div>
+            <div class="action-list">
+              <div class="action-item">
+                <svg class="action-icon allowed" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                  <polyline points="20 6 9 17 4 12"></polyline>
+                </svg>
+                <div class="action-text">
+                  <strong>All orders, approve / reject, progress</strong> <span class="tag">GET /staff/orders</span> <span class="tag">POST /staff/orders/{id}/decision</span> <span class="tag">POST /staff/orders/{id}/status</span>
+                </div>
+              </div>
+              <div class="action-item">
+                <svg class="action-icon blocked" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                  <line x1="18" y1="6" x2="6" y2="18"></line>
+                  <line x1="6" y1="6" x2="18" y2="18"></line>
+                </svg>
+                <div class="action-text blocked-desc">
+                  <strong>Employees, store ops, stats</strong> <span class="tag" style="color: var(--danger)">403 manager only</span>
+                </div>
+              </div>
+            </div>
+            <div class="spec-prompts-section">
+              <div class="spec-prompts-label">Suggested Prompts</div>
+              <div class="spec-prompts-list" id="staffPromptsContainer"></div>
+            </div>
+          </div>
+
+          <!-- STAFF APP: Store Manager capabilities -->
+          <div class="role-spec-box" id="staffManagerSpecBox" data-variant-only="staff">
             <div class="spec-title-row">
               <div class="spec-role-label manager">
                 <span>👔</span>
@@ -356,44 +395,27 @@
               </div>
               <span class="spec-badge">+ biscuit_coffee_manager</span>
             </div>
-
             <div class="action-list">
-              <!-- Store Manager Permissions -->
               <div class="action-item">
                 <svg class="action-icon allowed" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
                   <polyline points="20 6 9 17 4 12"></polyline>
                 </svg>
                 <div class="action-text">
-                  <strong>All Customer Permissions</strong> (Menu, Rewards, Orders)
+                  <strong>Everything staff can do</strong> (orders, approvals, progress)
                 </div>
               </div>
-
               <div class="action-item">
                 <svg class="action-icon allowed" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
                   <polyline points="20 6 9 17 4 12"></polyline>
                 </svg>
                 <div class="action-text">
-                  <strong>Employee Directory Access</strong> <span class="tag" style="color: var(--success)">200 OK</span>
-                </div>
-              </div>
-
-              <div class="action-item">
-                <svg class="action-icon blocked" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-                  <line x1="18" y1="6" x2="6" y2="18"></line>
-                  <line x1="6" y1="6" x2="18" y2="18"></line>
-                </svg>
-                <div class="action-text blocked-desc">
-                  <strong>Gateway Policies Blocked</strong> (Admin config locked)
+                  <strong>Employees, hours, menu, stats, audit</strong> <span class="tag">GET /employees</span> <span class="tag">PUT /staff/store/hours</span> <span class="tag">PATCH /staff/menu/{id}</span> <span class="tag">GET /staff/stats</span>
                 </div>
               </div>
             </div>
-
-            <!-- Suggested Prompts for Store Manager -->
-            <div class="spec-prompts-section">
+            <div class="spec-prompts-section" data-role-only="manager">
               <div class="spec-prompts-label">Suggested Prompts</div>
-              <div class="spec-prompts-list" id="managerPromptsContainer">
-                <!-- Rendered dynamically -->
-              </div>
+              <div class="spec-prompts-list" id="staffManagerPromptsContainer"></div>
             </div>
           </div>
         </div>
@@ -438,6 +460,14 @@
 
       <!-- RIGHT CONTAINER: Interactive Agent Chat & UI -->
       <section class="chat-container">
+        <!-- STAFF APP: console tabs (orders board / employees / store ops / chat) -->
+        <nav class="staff-tab-bar" id="staffTabBar" data-variant-only="staff" role="tablist" aria-label="Staff console">
+          <button type="button" class="staff-tab" role="tab" data-staff-tab="orders">📋 Orders board</button>
+          <button type="button" class="staff-tab" role="tab" data-staff-tab="employees" data-role-only="manager">👥 Employees</button>
+          <button type="button" class="staff-tab" role="tab" data-staff-tab="store" data-role-only="manager">🏪 Store ops</button>
+          <button type="button" class="staff-tab" role="tab" data-staff-tab="chat">💬 Staff assistant</button>
+        </nav>
+        <div class="staff-console" id="staffConsole" data-variant-only="staff" hidden></div>
         <!-- IFRAME OVERLAY FOR NATIVE ADK DEV-UI EMBED -->
         <div class="iframe-container" id="iframeContainer">
           <iframe class="adk-iframe" id="adkIframe" src="http://localhost:8000/dev-ui"></iframe>
@@ -530,7 +560,7 @@
       <div class="modal-body arch-modal-body">
         <!-- Diagram Container -->
         <div class="arch-diagram-canvas">
-          <img src="assets/architecture_diagram_v3.png" alt="Apigee & Keycloak AI Agent Architecture Diagram" class="arch-diagram-large-img" id="archDiagramImg">
+          <img src="assets/architecture_diagram_v5.png" alt="Apigee & Keycloak AI Agent Architecture Diagram" class="arch-diagram-large-img" id="archDiagramImg">
         </div>
 
         <!-- Request Flow Summary Pills -->
@@ -648,6 +678,8 @@
               <option value="quota_exceeded">Quota exceeded (429)</option>
               <option value="order_limit_exceeded">Large order blocked (422)</option>
               <option value="jwt_access">JWT access</option>
+              <option value="approval_required">Pending staff approval</option>
+              <option value="approval_trigger_failed">Approval request failed (legacy)</option>
             </select>
             <select id="logsEnvFilter" class="logs-select" aria-label="Environment">
               <option value="all">All environments</option>
