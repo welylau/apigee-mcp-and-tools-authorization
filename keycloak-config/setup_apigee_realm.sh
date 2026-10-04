@@ -75,7 +75,7 @@ if ! sudo docker exec "$KEYCLOAK_CONTAINER" /opt/keycloak/bin/kcadm.sh get clien
     -s name="biscuit-coffee-audience" \
     -s protocol="openid-connect" \
     -s protocolMapper="oidc-audience-mapper" \
-    -s 'config={"included.custom.audience":"biscuit-coffee","id.token.claim":"true","access.token.claim":"true"}'
+    -s 'config={"included.custom.audience":"biscuit-coffee","id.token.claim":"false","access.token.claim":"true"}'
 else
   echo "Audience mapper already exists."
 fi
@@ -143,27 +143,7 @@ else
 fi
 sudo docker exec "$KEYCLOAK_CONTAINER" /opt/keycloak/bin/kcadm.sh add-roles -r "$REALM_NAME" --uusername "$MANAGER_USER" --rolename manager --rolename customer 2>/dev/null || true
 
-# 9c. Additional customer user
-CUSTOMER3_USER="customer3@biscuit-coffee.com"
-CUSTOMER3_PASS="ilovecoffee"
-if ! sudo docker exec "$KEYCLOAK_CONTAINER" /opt/keycloak/bin/kcadm.sh get users -r "$REALM_NAME" -q username="$CUSTOMER3_USER" | grep -q "\"username\" : \"$CUSTOMER3_USER\""; then
-  sudo docker exec "$KEYCLOAK_CONTAINER" /opt/keycloak/bin/kcadm.sh create users -r "$REALM_NAME" \
-    -s username="$CUSTOMER3_USER" \
-    -s email="$CUSTOMER3_USER" \
-    -s firstName="Customer" \
-    -s lastName="Three" \
-    -s enabled=true \
-    -s emailVerified=true
-
-  sudo docker exec "$KEYCLOAK_CONTAINER" /opt/keycloak/bin/kcadm.sh set-password -r "$REALM_NAME" \
-    --username "$CUSTOMER3_USER" \
-    --new-password "$CUSTOMER3_PASS"
-else
-  echo "User '$CUSTOMER3_USER' already exists."
-fi
-sudo docker exec "$KEYCLOAK_CONTAINER" /opt/keycloak/bin/kcadm.sh add-roles -r "$REALM_NAME" --uusername "$CUSTOMER3_USER" --rolename customer 2>/dev/null || true
-
-# 9d. Michael Bosh customer user
+# 9c. Michael Bosh customer user
 CUSTOMER2_USER="customer2@biscuit-coffee.com"
 CUSTOMER2_PASS="ilovecoffee"
 if ! sudo docker exec "$KEYCLOAK_CONTAINER" /opt/keycloak/bin/kcadm.sh get users -r "$REALM_NAME" -q username="$CUSTOMER2_USER" | grep -q "\"username\" : \"$CUSTOMER2_USER\""; then

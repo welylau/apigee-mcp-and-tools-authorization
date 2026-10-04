@@ -93,7 +93,7 @@ if [ -z "$CID" ]; then
       name: "biscuit-coffee-audience", protocol: "openid-connect",
       protocolMapper: "oidc-audience-mapper",
       config: {"included.custom.audience": "biscuit-coffee",
-               "id.token.claim": "true", "access.token.claim": "true"}
+               "id.token.claim": "false", "access.token.claim": "true"}
     }]
   }')
   curl -sf -X POST "${H[@]}" "$API/clients" -d "$PAYLOAD"

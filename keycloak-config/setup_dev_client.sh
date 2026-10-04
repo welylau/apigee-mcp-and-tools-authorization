@@ -69,7 +69,7 @@ PAYLOAD=$(jq -n --arg id "$DEV_CLIENT_ID" --arg secret "$DEV_CLIENT_SECRET" '{
     protocolMapper: "oidc-audience-mapper",
     config: {
       "included.custom.audience": "biscuit-coffee",
-      "id.token.claim": "true",
+      "id.token.claim": "false",
       "access.token.claim": "true"
     }
   }]
