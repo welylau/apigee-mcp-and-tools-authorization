@@ -8,19 +8,29 @@ fi
 
 PROJECT="${GOOGLE_CLOUD_PROJECT:-YOUR_GCP_PROJECT_ID}"
 REGION="${GOOGLE_CLOUD_REGION:-asia-southeast1}"
+# Keycloak realm whose access tokens the backend accepts in X-User-Token
+# (must match the issuer the Apigee proxy verifies).
+KEYCLOAK_ISSUER="${KEYCLOAK_ISSUER:-https://keycloak.YOUR_KEYCLOAK_IP.nip.io/realms/apigee-demo}"
+KEYCLOAK_AUDIENCE="${KEYCLOAK_AUDIENCE:-biscuit-coffee}"
+# Dedicated runtime identity with Firestore access only (roles/datastore.user).
+RUN_SA="${BACKEND_RUN_SA:-biscuit-backend-run@${PROJECT}.iam.gserviceaccount.com}"
 
 echo "================================================="
 echo "Deploying biscuit-coffee-backend to Cloud Run..."
+echo "  project=$PROJECT region=$REGION"
+echo "  runtime SA=$RUN_SA"
+echo "  KEYCLOAK_ISSUER=$KEYCLOAK_ISSUER"
 echo "================================================="
-# Order approvals are decided in the Staff app (decideOrder writes the decision
-# directly), so the backend needs no Application Integration settings. The
-# --remove-env-vars clears the old INTEGRATION_* keys from services deployed
-# before that change; it is a no-op once they are gone. Other env vars stay.
+# The service stays private (Cloud Run IAM: only the Apigee SA and named
+# operators hold run.invoker). Every non-public route also verifies the
+# user's Keycloak token forwarded by Apigee in X-User-Token (see auth.py).
 gcloud run deploy biscuit-coffee-backend \
   --source=./coffee-shop-backend \
   --project="$PROJECT" \
   --region="$REGION" \
-  --remove-env-vars="INTEGRATION_SA_EMAIL,INTEGRATION_SA_ID,INTEGRATION_REGION" \
+  --service-account="$RUN_SA" \
+  --no-allow-unauthenticated \
+  --update-env-vars="KEYCLOAK_ISSUER=${KEYCLOAK_ISSUER},KEYCLOAK_AUDIENCE=${KEYCLOAK_AUDIENCE}" \
   --quiet
 
 echo "Backend deployment complete."
