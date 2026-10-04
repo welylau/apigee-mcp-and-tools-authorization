@@ -295,6 +295,21 @@ export function pendingIds(orders) {
 }
 
 /**
+ * The latest orders plus every pending order (fetched separately, so a busy
+ * day can't push pending orders out of the latest-N window). De-duplicated by
+ * id; the pending fetch ran last, so its copy wins.
+ */
+export function mergeOrders(recent, pending) {
+  const byId = new Map();
+  const noId = [];
+  for (const o of [...(recent || []), ...(pending || [])]) {
+    const id = orderId(o);
+    if (id) byId.set(id, o); else noId.push(o);
+  }
+  return [...byId.values(), ...noId];
+}
+
+/**
  * Pending orders that were not pending at the previous refresh.
  * `prev` is null on the first load (nothing counts as new then).
  */

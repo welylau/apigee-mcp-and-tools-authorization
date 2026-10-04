@@ -94,8 +94,7 @@ import threading
 import settings_api
 
 SETTINGS_LOCK = threading.Lock()
-SETTINGS_RATE_LIMIT = int(os.environ.get("SETTINGS_RATE_LIMIT", "60"))  # requests / minute / IP
-RATE_WINDOWS = {}
+SETTINGS_RATE_LIMIT = int(os.environ.get("SETTINGS_RATE_LIMIT", "60"))  # requests / minute / user
 PRINCIPAL_CACHE = {}
 
 SSL_CTX = ssl._create_unverified_context()
@@ -106,10 +105,129 @@ SSL_CTX = ssl._create_unverified_context()
 # exactly as they do for the agent. Unlike Keycloak (nip.io), the Apigee host has
 # a real certificate, so TLS is verified here.
 ORDER_ID_PATH_RE = re.compile(r"^/api/orders/([A-Za-z0-9_-]{1,64})/status$")
-ORDER_STATUS_RATE_LIMIT = int(os.environ.get("ORDER_STATUS_RATE_LIMIT", "60"))  # requests / minute / IP
-ORDER_RATE_WINDOWS = {}
+ORDER_STATUS_RATE_LIMIT = int(os.environ.get("ORDER_STATUS_RATE_LIMIT", "60"))  # requests / minute / user
 APIGEE_SSL_CTX = ssl.create_default_context()
 ADK_PROC = None
+
+# ---------------------------------------------------------------------------
+# Rate limiting. Buckets are keyed on the verified Keycloak subject once the
+# caller is authenticated ("sub:<id>"); anonymous traffic (guests, failed
+# auth) is keyed on the left-most X-Forwarded-For entry (the client as seen by
+# Cloud Run's front end) or the socket address locally. Stale keys are pruned.
+# ---------------------------------------------------------------------------
+ADK_RATE_LIMIT = int(os.environ.get("ADK_RATE_LIMIT", "120"))            # ADK calls / minute / caller
+AUTH_FAIL_RATE_LIMIT = int(os.environ.get("AUTH_FAIL_RATE_LIMIT", "30"))  # failed auths / minute / client
+OAUTH_RATE_LIMIT = int(os.environ.get("OAUTH_RATE_LIMIT", "30"))          # oauth calls / minute / client
+RATE_BUCKETS = {}
+_RATE_PRUNED_AT = [0.0]
+
+
+def rate_limited(bucket, key, limit, window=60, count=True):
+    """Sliding window limiter. True when `key` has used up `limit` in `window` s.
+
+    count=False only checks the budget without recording a hit.
+    """
+    now = time.time()
+    with SETTINGS_LOCK:
+        if now - _RATE_PRUNED_AT[0] > window:
+            for keys in RATE_BUCKETS.values():
+                for k in [k for k, hits in keys.items() if not hits or now - hits[-1] >= window]:
+                    del keys[k]
+            _RATE_PRUNED_AT[0] = now
+        keys = RATE_BUCKETS.setdefault(bucket, {})
+        hits = [t for t in keys.get(key, ()) if now - t < window]
+        limited = len(hits) >= limit
+        if not limited and count:
+            hits.append(now)
+        keys[key] = hits
+    return limited
+
+
+# ---------------------------------------------------------------------------
+# Request path handling. Every request path is decoded and normalised once,
+# before routing, so encoded variants (/run%5Fsse, /apps/%2e%2e/...) can't slip
+# past the route checks and reach ADK in a form the checks never saw.
+# ---------------------------------------------------------------------------
+_BAD_ENCODED_RE = re.compile(r"%(2[fF]|5[cC]|00|25)")
+# The UI only ever percent-encodes '@' and '+' (encodeURIComponent on email
+# user ids). Any other escape (e.g. /run%5Fsse) is refused, not decoded.
+_PCT_RE = re.compile(r"%(?!40|2[bB])")
+
+
+def normalize_request_path(raw):
+    """-> (decoded_path, query) or None when the path must be refused."""
+    if not raw or len(raw) > 4096 or not raw.startswith("/"):
+        return None
+    path, _, query = raw.split("#", 1)[0].partition("?")
+    if _BAD_ENCODED_RE.search(path) or _PCT_RE.search(path):
+        return None   # encoded slash, backslash, NUL, double-encoding, other escapes
+    try:
+        decoded = urllib.parse.unquote(path, errors="strict")
+    except UnicodeDecodeError:
+        return None
+    if re.search(r"[\x00-\x1f\x7f\\?#]", decoded):
+        return None
+    segs = [s for s in decoded.split("/") if s]
+    if any(s in (".", "..") for s in segs):
+        return None
+    norm = "/" + "/".join(segs)
+    if decoded.endswith("/") and segs:
+        norm += "/"
+    return norm, query
+
+
+# Exact ADK routes the UI needs. Everything else (session GET/list/PATCH,
+# artifacts, eval, debug/trace, builder, ...) is refused with 404.
+SID_RE = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
+GUEST_ID_RE = re.compile(r"^guest-[A-Za-z0-9]{16,64}$")
+
+
+def match_adk_route(method, path):
+    """-> (kind, params) for an allowed ADK call, else None. `path` is normalised."""
+    if path.startswith("/api/"):
+        path = path[4:]
+    if path.endswith("/"):
+        return None
+    segs = path.strip("/").split("/")
+    if segs == ["list-apps"]:
+        return ("list_apps", {}) if method == "GET" else None
+    if segs == ["run"] or segs == ["run_sse"]:
+        return (segs[0], {}) if method == "POST" else None
+    if len(segs) in (5, 6) and segs[0] == "apps" and segs[2] == "users" and segs[4] == "sessions":
+        params = {"app": segs[1], "uid": segs[3]}
+        if len(segs) == 5 and method == "POST":
+            return "create_session", params
+        if len(segs) == 6 and method == "DELETE":
+            params["sid"] = segs[5]
+            return "delete_session", params
+    return None
+
+
+# Static files. Only the UI's own assets are served; source files, .env,
+# agents/ etc. under the web-ui directory are never exposed.
+STATIC_RE = re.compile(
+    r"^/(index\.html)?$"
+    r"|^/css/[A-Za-z0-9_.-]+\.css$"
+    r"|^/js/([A-Za-z0-9_-]+/)?[A-Za-z0-9_.-]+\.js$"
+    r"|^/assets/[A-Za-z0-9_.-]+\.(png|svg|jpg|jpeg|webp|ico)$")
+
+_kc = urllib.parse.urlsplit(KEYCLOAK_BASE)
+KEYCLOAK_ORIGIN = f"{_kc.scheme}://{_kc.netloc}" if _kc.scheme in ("http", "https") and _kc.netloc else ""
+# Inline style attributes are still used by index.html and some JS templates,
+# hence style-src 'unsafe-inline'; scripts are strictly same-origin files.
+PAGE_CSP = "; ".join([
+    "default-src 'self'",
+    "script-src 'self'",
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+    "font-src 'self' https://fonts.gstatic.com",
+    "img-src 'self' data: https://www.gstatic.com",
+    f"connect-src 'self' {KEYCLOAK_ORIGIN}".strip(),
+    "object-src 'none'",
+    "base-uri 'self'",
+    "frame-src 'none'",
+    "frame-ancestors 'none'",
+    f"form-action 'self' {KEYCLOAK_ORIGIN}".strip(),
+])
 
 # ---------------------------------------------------------------------------
 # Role gate (server-side). The staff app only admits staff / store managers;
@@ -189,8 +307,7 @@ def revoke_tokens(token_data):
 # one MCP tools/call on Apigee with the caller's own token + the staff API key,
 # so Apigee (product + scope checks) decides what the caller may do.
 # ---------------------------------------------------------------------------
-STAFF_RATE_LIMIT = int(os.environ.get("STAFF_RATE_LIMIT", "120"))  # requests / minute / IP
-STAFF_RATE_WINDOWS = {}
+STAFF_RATE_LIMIT = int(os.environ.get("STAFF_RATE_LIMIT", "120"))  # requests / minute / user
 ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 HHMM_RE = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 EMAIL_FILTER_RE = re.compile(r"^[A-Za-z0-9._%+@-]{1,254}$")
@@ -237,6 +354,17 @@ def _clean_text(value, max_len):
     return text
 
 
+def _expected_status(body):
+    """Optional optimistic-concurrency hint: the status the UI saw ('from')."""
+    raw = body.get("expected_status")
+    if raw in (None, ""):
+        return ""
+    expected = str(raw).upper()
+    if expected not in ORDER_STATUS_FILTERS:
+        raise InputError("expected_status is not a known order status.")
+    return expected
+
+
 def build_staff_call(action, groups, params, body):
     """Validate input -> (tool, path_params, query, body).
 
@@ -266,7 +394,11 @@ def build_staff_call(action, groups, params, body):
         status = str(body.get("status") or "").upper()
         if status not in ORDER_PROGRESS_STATUSES:
             raise InputError(f"status must be one of {', '.join(ORDER_PROGRESS_STATUSES)}.")
-        return "updateOrderStatus", [(groups[0], ["order_id", "id", "orderId"])], {}, {"status": status}
+        payload = {"status": status}
+        expected = _expected_status(body)
+        if expected:
+            payload["expected_status"] = expected
+        return "updateOrderStatus", [(groups[0], ["order_id", "id", "orderId"])], {}, payload
     if action == "order_decision":
         decision = str(body.get("decision") or "").upper()
         if decision not in ("APPROVE", "REJECT"):
@@ -275,6 +407,9 @@ def build_staff_call(action, groups, params, body):
         payload = {"decision": decision}
         if reason:
             payload["reason"] = reason
+        expected = _expected_status(body)
+        if expected:
+            payload["expected_status"] = expected
         return "decideOrder", [(groups[0], ["order_id", "id", "orderId"])], {}, payload
     if action == "employees":
         return "listEmployees", [], {}, None
@@ -341,6 +476,13 @@ def build_tool_args(tool, schema, path_params, query, body):
     args.update(query)
     if body is not None:
         body_key = next((k for k in props if k.lower().endswith("body")), None)
+        if "expected_status" in body:
+            # Optimistic-concurrency hint. Only sent when the gateway's tool
+            # schema declares it; a strict MCP input schema would otherwise
+            # reject the whole call.
+            body_props = ((props.get(body_key) or {}).get("properties") or {}) if body_key else props
+            if "expected_status" not in body_props:
+                body = {k: v for k, v in body.items() if k != "expected_status"}
         if body_key:
             args[body_key] = body
         elif props and all(k in props for k in body):
@@ -492,10 +634,25 @@ def is_adk_running(host="127.0.0.1", port=8000):
     except Exception:
         return False
 
+def _adk_command():
+    """ADK launch command: the headless API server only (no Dev UI / builder)."""
+    import shutil
+    args = ["api_server", "--host=127.0.0.1", "--port=8000", "--no-reload",
+            "--session_service_uri=memory://", "--artifact_service_uri=memory://", "."]
+    venv_adk = os.path.abspath(os.path.join(DIRECTORY, "..", ".venv", "bin", "adk"))
+    if os.path.isfile(venv_adk):
+        return [venv_adk] + args
+    if shutil.which("uv"):
+        return ["uv", "run", "adk"] + args
+    if shutil.which("adk"):
+        return ["adk"] + args
+    return ["python3", "-m", "google.adk.cli"] + args
+
+
 def ensure_adk_server():
-    """Auto-start local ADK web server on port 8000 if not already running."""
+    """Auto-start the local ADK API server on 127.0.0.1:8000 if not already running."""
     if is_adk_running():
-        print("🤖 Local ADK Web server already running on port 8000.")
+        print("🤖 Local ADK server already running on port 8000.")
         return None
 
     # If ADK_BACKEND is configured to an external endpoint, skip local server start
@@ -520,122 +677,142 @@ def ensure_adk_server():
         print(f"⚠️ Agents directory not found in candidate paths: {candidates}")
         return None
 
-    print(f"🚀 Auto-starting local ADK Web on port 8000 from {agents_dir}...")
+    print(f"🚀 Auto-starting local ADK API server on 127.0.0.1:8000 from {agents_dir}...")
     try:
-        # Determine executable: prefer project .venv adk or uv run adk, fallback to system adk
-        import shutil
-        venv_adk = os.path.abspath(os.path.join(DIRECTORY, "..", ".venv", "bin", "adk"))
-        if os.path.isfile(venv_adk):
-            cmd = [venv_adk, "web", "--host=127.0.0.1", "--port=8000", "--allow_origins=*", "--session_service_uri=memory://", "--artifact_service_uri=memory://", "."]
-        elif shutil.which("uv"):
-            cmd = ["uv", "run", "adk", "web", "--host=127.0.0.1", "--port=8000", "--allow_origins=*", "--session_service_uri=memory://", "--artifact_service_uri=memory://", "."]
-        elif shutil.which("adk"):
-            cmd = ["adk", "web", "--host=127.0.0.1", "--port=8000", "--allow_origins=*", "--session_service_uri=memory://", "--artifact_service_uri=memory://", "."]
-        else:
-            cmd = ["python3", "-m", "google.adk.cli", "web", "--host=127.0.0.1", "--port=8000", "--allow_origins=*", "--session_service_uri=memory://", "--artifact_service_uri=memory://", "."]
-
-        proc = subprocess.Popen(cmd, cwd=agents_dir)
+        proc = subprocess.Popen(_adk_command(), cwd=agents_dir)
         atexit.register(lambda: proc.terminate())
-        for _ in range(16):
+        for _ in range(30):
             time.sleep(0.5)
             if is_adk_running():
-                print("✅ Local ADK Web server is online on port 8000!")
+                print("✅ Local ADK API server is online on port 8000!")
                 break
         return proc
     except Exception as e:
-        print(f"⚠️ Could not auto-start ADK web: {e}")
+        print(f"⚠️ Could not auto-start ADK api_server: {e}")
         return None
 
-PROXY_PREFIXES = ("/api/", "/list-apps", "/apps/", "/run", "/run_sse", "/health")
+
+PKCE_VERIFIER_RE = re.compile(r"^[A-Za-z0-9._~-]{43,128}$")
+ADK_RUN_BODY_LIMIT = 256 * 1024
+
+
+def _q(segment):
+    return urllib.parse.quote(segment, safe="")
+
+
+def _pick(d, *names):
+    for n in names:
+        if n in d:
+            return d[n]
+    return None
+
 
 class CoffeeShopHandler(http.server.SimpleHTTPRequestHandler):
+    server_version = "BiscuitCoffeeBFF"
+    sys_version = ""
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=DIRECTORY, **kwargs)
 
-    def do_OPTIONS(self):
-        self.send_response(200)
-        self.send_header('Access-Control-Allow-Origin', '*')
-        self.send_header('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS')
-        self.send_header('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-api-key')
-        self.end_headers()
+    # ------------------------------------------------------------------
+    # Response headers. Every response gets the baseline hardening headers;
+    # anything that did not set its own CSP gets the page CSP.
+    # ------------------------------------------------------------------
+    def send_response(self, code, message=None):
+        self._csp_set = False
+        super().send_response(code, message)
 
-    def do_HEAD(self):
-        if any(self.path.startswith(p) for p in PROXY_PREFIXES):
-            self.proxy_to_adk("HEAD")
-        else:
-            super().do_HEAD()
+    def send_header(self, keyword, value):
+        if keyword.lower() == 'content-security-policy':
+            self._csp_set = True
+        super().send_header(keyword, value)
 
     def end_headers(self):
-        # Baseline hardening headers on every response we emit.
-        # TODO(security): add a page-wide strict CSP. index.html still carries an
-        # inline OAuth-callback <script> and inline styles, so a strict policy
-        # needs those moved to files (or hashed) first.
+        if not getattr(self, '_csp_set', False):
+            self.send_header('Content-Security-Policy', PAGE_CSP)
         self.send_header('X-Content-Type-Options', 'nosniff')
-        self.send_header('X-Frame-Options', 'SAMEORIGIN')
+        self.send_header('X-Frame-Options', 'DENY')
         self.send_header('Referrer-Policy', 'strict-origin-when-cross-origin')
         self.send_header('Permissions-Policy', 'camera=(), microphone=(), geolocation=()')
+        self._csp_set = False
         super().end_headers()
 
+    # ------------------------------------------------------------------
+    # Routing. The path is decoded + normalised once, then matched exactly.
+    # ------------------------------------------------------------------
     def do_GET(self):
-        # Must be checked before PROXY_PREFIXES, otherwise "/api/" forwards it to ADK.
-        if self.path.startswith("/api/agent-info"):
-            self.handle_agent_info()
-            return
-        if self.path.startswith("/api/ui-config"):
-            self.handle_ui_config()
-            return
-        if self.path.startswith("/api/oauth/userinfo"):
-            self.handle_oauth_userinfo()
-            return
-        if self.path.startswith("/api/settings/"):
-            self.handle_settings()
-            return
-        if self.path.startswith("/api/staff/"):
-            self.handle_staff_api("GET")
-            return
-        if self.path.startswith("/api/orders/"):
-            self.handle_order_status()
-            return
-        if any(self.path.startswith(p) for p in PROXY_PREFIXES):
-            self.proxy_to_adk("GET")
-        else:
-            super().do_GET()
+        self._dispatch('GET')
+
+    def do_HEAD(self):
+        self._dispatch('HEAD')
 
     def do_POST(self):
-        if self.path.startswith("/api/oauth/exchange"):
-            self.handle_oauth_exchange()
-            return
-        if self.path.startswith("/api/oauth/refresh"):
-            self.handle_oauth_refresh()
-            return
-        if self.path.startswith("/api/oauth/logout"):
-            self.handle_oauth_logout()
-            return
-        if self.path.startswith("/api/staff/"):
-            self.handle_staff_api("POST")
-            return
-        if any(self.path.startswith(p) for p in PROXY_PREFIXES):
-            self.proxy_to_adk("POST")
-        else:
-            self.send_error(404, "Not Found")
+        self._dispatch('POST')
 
     def do_PUT(self):
-        if self.path.startswith("/api/staff/"):
-            self.handle_staff_api("PUT")
-        else:
-            self.send_error(405, "Method Not Allowed")
+        self._dispatch('PUT')
 
     def do_PATCH(self):
-        if self.path.startswith("/api/staff/"):
-            self.handle_staff_api("PATCH")
-        else:
-            self.send_error(405, "Method Not Allowed")
+        self._dispatch('PATCH')
 
     def do_DELETE(self):
-        if any(self.path.startswith(p) for p in PROXY_PREFIXES):
-            self.proxy_to_adk("DELETE")
-        else:
-            self.send_error(404, "Not Found")
+        self._dispatch('DELETE')
+
+    def do_OPTIONS(self):
+        # Same-origin app: no CORS preflight is ever needed.
+        self._dispatch('OPTIONS')
+
+    def _dispatch(self, method):
+        norm = normalize_request_path(self.path)
+        if norm is None:
+            self._send_json(400, {'error': 'bad_path', 'message': 'Malformed request path.'})
+            return
+        path, query = norm
+        self.path = path + ('?' + query if query else '')
+        self.route_path, self.route_query = path, query
+
+        if path.startswith('/api/staff/'):
+            self.handle_staff_api(method)
+            return
+        if method == 'GET':
+            simple = {
+                '/api/agent-info': self.handle_agent_info,
+                '/api/ui-config': self.handle_ui_config,
+                '/api/oauth/userinfo': self.handle_oauth_userinfo,
+            }.get(path)
+            if simple:
+                simple()
+                return
+            if path.startswith('/api/settings/'):
+                self.handle_settings()
+                return
+            if path.startswith('/api/orders/'):
+                self.handle_order_status()
+                return
+        if method == 'POST':
+            oauth = {
+                '/api/oauth/exchange': self.handle_oauth_exchange,
+                '/api/oauth/refresh': self.handle_oauth_refresh,
+                '/api/oauth/logout': self.handle_oauth_logout,
+            }.get(path)
+            if oauth:
+                oauth()
+                return
+        route = match_adk_route(method, path)
+        if route:
+            self.proxy_to_adk(*route)
+            return
+        if method in ('GET', 'HEAD') and STATIC_RE.match(path):
+            super().do_GET() if method == 'GET' else super().do_HEAD()
+            return
+        self._send_json(404, {'error': 'not_found'})
+
+    def _client_key(self):
+        """Anonymous rate-limit key: left-most X-Forwarded-For, else socket IP."""
+        xff = (self.headers.get('X-Forwarded-For') or '').split(',')[0].strip()
+        if xff and re.fullmatch(r'[0-9A-Fa-f:.]{2,45}', xff):
+            return 'ip:' + xff
+        return 'ip:' + self.client_address[0]
 
     def handle_ui_config(self):
         """Public, non-secret UI configuration (variant, ADK app, Keycloak client id)."""
@@ -666,7 +843,7 @@ class CoffeeShopHandler(http.server.SimpleHTTPRequestHandler):
                             model = line.split("=", 1)[1].strip().strip('"').strip("'")
                             break
 
-        info = {
+        self._send_json(200, {
             "agentName": "biscuit_coffee_staff_agent" if IS_STAFF_UI else "biscuit_coffee_agent",
             "framework": "Google ADK",
             "model": model or "unknown",
@@ -675,31 +852,37 @@ class CoffeeShopHandler(http.server.SimpleHTTPRequestHandler):
             "adkLive": is_adk_running(),
             "variant": UI_VARIANT,
             "appName": ADK_APP_NAME,
-        }
+        })
 
-        payload = json.dumps(info).encode('utf-8')
-        self.send_response(200)
-        self.send_header('Content-Type', 'application/json')
-        self.send_header('Cache-Control', 'no-store')
-        self.send_header('Access-Control-Allow-Origin', '*')
-        self.send_header('Content-Length', str(len(payload)))
-        self.end_headers()
-        self.wfile.write(payload)
+    # ------------------------------------------------------------------
+    # Authentication + per-identity rate limiting for BFF APIs.
+    # ------------------------------------------------------------------
+    def _require_principal(self, bucket, limit, unauth_msg):
+        """Authenticate, apply the role gate, then rate-limit on the verified
+        subject. Returns the principal, or None after sending the error."""
+        client = self._client_key()
+        if rate_limited('auth_fail', client, AUTH_FAIL_RATE_LIMIT, count=False):
+            self._send_json(429, {'error': 'rate_limited', 'message': 'Too many failed sign-ins, slow down.'})
+            return None
+        principal, err = self._settings_principal()
+        if err:
+            if err == 401:
+                rate_limited('auth_fail', client, AUTH_FAIL_RATE_LIMIT)
+            msg = unauth_msg if err == 401 else 'Identity provider unavailable.'
+            self._send_json(err, {'error': 'unauthorized' if err == 401 else 'idp_unavailable', 'message': msg})
+            return None
+        if not principal['allowed']:
+            self._send_json(403, gate_denied_payload())
+            return None
+        subject = principal.get('sub') or principal.get('email') or 'unknown'
+        if rate_limited(bucket, f'sub:{subject}', limit):
+            self._send_json(429, {'error': 'rate_limited', 'message': 'Too many requests, slow down.'})
+            return None
+        return principal
 
     # ------------------------------------------------------------------
     # Staff API (staff variant only). Same-origin (no CORS headers).
     # ------------------------------------------------------------------
-    def _staff_rate_limited(self):
-        ip = self.client_address[0]
-        now = time.time()
-        with SETTINGS_LOCK:
-            window = [t for t in STAFF_RATE_WINDOWS.get(ip, []) if now - t < 60]
-            limited = len(window) >= STAFF_RATE_LIMIT
-            if not limited:
-                window.append(now)
-            STAFF_RATE_WINDOWS[ip] = window
-        return limited
-
     def _read_json_body(self, limit=4096):
         try:
             length = int(self.headers.get('Content-Length', 0) or 0)
@@ -721,10 +904,10 @@ class CoffeeShopHandler(http.server.SimpleHTTPRequestHandler):
         if not IS_STAFF_UI:
             self._send_json(404, {'error': 'not_found'})
             return
-        parsed = urllib.parse.urlparse(self.path)
+        path = self.route_path
         route, groups, path_known = None, (), False
         for m, rx, action in STAFF_ROUTES:
-            match = rx.match(parsed.path)
+            match = rx.match(path)
             if match:
                 path_known = True
                 if m == method:
@@ -734,16 +917,8 @@ class CoffeeShopHandler(http.server.SimpleHTTPRequestHandler):
             self._send_json(405 if path_known else 404,
                             {'error': 'method_not_allowed' if path_known else 'not_found'})
             return
-        if self._staff_rate_limited():
-            self._send_json(429, {'error': 'rate_limited', 'message': 'Too many requests, slow down.'})
-            return
-        principal, err = self._settings_principal()
-        if err:
-            msg = 'Sign in with a staff account.' if err == 401 else 'Identity provider unavailable.'
-            self._send_json(err, {'error': 'unauthorized' if err == 401 else 'idp_unavailable', 'message': msg})
-            return
-        if not principal['allowed']:
-            self._send_json(403, gate_denied_payload())
+        principal = self._require_principal('staff', STAFF_RATE_LIMIT, 'Sign in with a staff account.')
+        if not principal:
             return
         if not APIGEE_PROD_HOSTNAME:
             self._send_json(503, {'error': 'gateway_not_configured', 'message': 'APIGEE_PROD_HOSTNAME is not set.'})
@@ -751,7 +926,7 @@ class CoffeeShopHandler(http.server.SimpleHTTPRequestHandler):
         try:
             body = self._read_json_body() if method in ('POST', 'PUT', 'PATCH') else {}
             tool, path_params, query, tool_body = build_staff_call(
-                route, groups, urllib.parse.parse_qs(parsed.query), body)
+                route, groups, urllib.parse.parse_qs(self.route_query), body)
         except InputError as e:
             self._send_json(400, {'error': 'invalid_input', 'message': str(e)})
             return
@@ -761,10 +936,11 @@ class CoffeeShopHandler(http.server.SimpleHTTPRequestHandler):
             print(f"🚨 Staff API error on {tool}: {type(e).__name__}: {e}", flush=True)
             status, out = 500, {'error': 'internal', 'message': 'Unexpected error.'}
         if status >= 400:
-            print(f"🧾 staff {method} {parsed.path} -> {tool}: {status} {out.get('error')}", flush=True)
+            print(f"🧾 staff {method} {path} -> {tool}: {status} {out.get('error')}", flush=True)
         self._send_json(status, out)
+
     # ------------------------------------------------------------------
-    # Settings drawer (BFF). Read-only, same-origin only (no CORS headers).
+    # JSON helpers
     # ------------------------------------------------------------------
     def _send_json(self, status, obj):
         payload = json.dumps(obj).encode('utf-8')
@@ -774,19 +950,30 @@ class CoffeeShopHandler(http.server.SimpleHTTPRequestHandler):
         self.send_header('Content-Security-Policy', "default-src 'none'; frame-ancestors 'none'")
         self.send_header('Content-Length', str(len(payload)))
         self.end_headers()
-        self.wfile.write(payload)
+        if self.command != 'HEAD':
+            self.wfile.write(payload)
+
+    def _send_raw(self, status, content, content_type='application/json'):
+        self.send_response(status)
+        self.send_header('Content-Type', content_type or 'application/json')
+        self.send_header('Cache-Control', 'no-store')
+        self.send_header('Content-Security-Policy', "default-src 'none'; frame-ancestors 'none'")
+        self.send_header('Content-Length', str(len(content)))
+        self.end_headers()
+        self.wfile.write(content)
 
     def _settings_principal(self):
         """Validate the caller's Keycloak access token server-side.
 
-        Returns (principal, error_status). Fails closed: unlike the legacy
-        /api/oauth/userinfo handler there is no "decode the JWT locally"
-        fallback when Keycloak is unreachable.
+        Returns (principal, error_status). Fails closed: there is no "decode
+        the JWT locally" fallback when Keycloak is unreachable.
         """
         auth = self.headers.get('Authorization', '')
         if not auth.startswith('Bearer ') or len(auth) > 8192:
             return None, 401
         token = auth[7:].strip()
+        if not token:
+            return None, 401
         cache_key = hashlib.sha256(token.encode('utf-8')).hexdigest()
         now = time.time()
         with SETTINGS_LOCK:
@@ -806,6 +993,8 @@ class CoffeeShopHandler(http.server.SimpleHTTPRequestHandler):
             return None, 401 if e.code in (401, 403) else 503
         except Exception:
             return None, 503
+        if not isinstance(userinfo, dict):
+            return None, 503
 
         # Token is confirmed active by Keycloak; now read its claims for roles.
         claims = jwt_claims_unverified(token)
@@ -816,6 +1005,8 @@ class CoffeeShopHandler(http.server.SimpleHTTPRequestHandler):
             'manager': flags['manager'],
             'staff': flags['staff'],
             'allowed': variant_gate(claims),
+            'scope': str(claims.get('scope') or ''),
+            'userinfo': userinfo,
         }
         with SETTINGS_LOCK:
             if len(PRINCIPAL_CACHE) > 256:
@@ -823,91 +1014,35 @@ class CoffeeShopHandler(http.server.SimpleHTTPRequestHandler):
             PRINCIPAL_CACHE[cache_key] = {'principal': principal, 'exp': min(now + 60, claims.get('exp', now + 60))}
         return principal, None
 
-    def _rate_limited(self):
-        """Simple per-IP sliding window: SETTINGS_RATE_LIMIT requests / minute."""
-        ip = self.client_address[0]
-        now = time.time()
-        with SETTINGS_LOCK:
-            window = [t for t in RATE_WINDOWS.get(ip, []) if now - t < 60]
-            if len(window) >= SETTINGS_RATE_LIMIT:
-                RATE_WINDOWS[ip] = window
-                return True
-            window.append(now)
-            RATE_WINDOWS[ip] = window
-        return False
-
-    def _order_rate_limited(self):
-        """Per-IP sliding window for the order-status poller (own budget)."""
-        ip = self.client_address[0]
-        now = time.time()
-        with SETTINGS_LOCK:
-            window = [t for t in ORDER_RATE_WINDOWS.get(ip, []) if now - t < 60]
-            limited = len(window) >= ORDER_STATUS_RATE_LIMIT
-            if not limited:
-                window.append(now)
-            ORDER_RATE_WINDOWS[ip] = window
-        return limited
-
+    # ------------------------------------------------------------------
+    # Order approval watcher
+    # ------------------------------------------------------------------
     def handle_order_status(self):
-        """GET /api/orders/<id>/status -> {order_id, status, decision, total_amount}.
+        """GET /api/orders/<id>/status -> {order_id, status, decision, total_amount, reason}.
 
         Asks Apigee's getOrder MCP tool with the caller's own Keycloak token, so
         the gateway's scope, ownership (order_not_found) and audit policies apply.
         Only a few fields are returned; the upstream body is never forwarded.
         """
-        match = ORDER_ID_PATH_RE.match(urllib.parse.urlparse(self.path).path)
+        match = ORDER_ID_PATH_RE.match(self.route_path)
         if not match:
             self._send_json(404, {'error': 'not_found'})
             return
         order_id = match.group(1)
-        if self._order_rate_limited():
-            self._send_json(429, {'error': 'rate_limited'})
-            return
-        auth = self.headers.get('Authorization', '')
-        if not auth.startswith('Bearer ') or len(auth) > 8192:
-            self._send_json(401, {'error': 'unauthorized'})
+        principal = self._require_principal('order_status', ORDER_STATUS_RATE_LIMIT, 'Sign in to track your order.')
+        if not principal:
             return
         if not APIGEE_PROD_HOSTNAME:
             self._send_json(503, {'error': 'gateway_not_configured'})
             return
 
-        rpc = json.dumps({
-            'jsonrpc': '2.0', 'id': 1, 'method': 'tools/call',
-            'params': {'name': 'getOrder', 'arguments': {'id': order_id}},
-        }).encode('utf-8')
-        req = urllib.request.Request(f"https://{APIGEE_PROD_HOSTNAME}/mcp", data=rpc, method='POST')
-        req.add_header('Content-Type', 'application/json')
-        req.add_header('Accept', 'application/json, text/event-stream')
-        req.add_header('x-api-key', KEYCLOAK_CLIENT_ID)
-        req.add_header('Authorization', auth)
-        try:
-            with urllib.request.urlopen(req, context=APIGEE_SSL_CTX, timeout=15) as resp:
-                raw = resp.read(256 * 1024).decode('utf-8', 'replace')
-        except urllib.error.HTTPError as e:
-            code = {401: 401, 403: 401, 429: 429}.get(e.code, 502)
-            self._send_json(code, {'error': 'upstream', 'status': e.code})
+        payload, err = mcp_rpc('tools/call', {'name': 'getOrder', 'arguments': {'id': order_id}},
+                               self.headers.get('Authorization', ''), timeout=15)
+        if err:
+            upstream = err[1].get('status') if isinstance(err[1], dict) else None
+            code = {401: 401, 403: 401, 429: 429}.get(err[0], 502)
+            self._send_json(code, {'error': 'upstream', 'status': upstream or err[0]})
             return
-        except Exception:
-            self._send_json(502, {'error': 'upstream_unreachable'})
-            return
-
-        # Streamable HTTP may answer as SSE ("data: {...}") or plain JSON.
-        payload = None
-        for line in raw.splitlines():
-            line = line.strip()
-            if line.startswith('data:'):
-                line = line[5:].strip()
-            if line.startswith('{'):
-                try:
-                    payload = json.loads(line)
-                except ValueError:
-                    pass
-        if payload is None:
-            try:
-                payload = json.loads(raw)
-            except ValueError:
-                self._send_json(502, {'error': 'bad_upstream_body'})
-                return
 
         result = payload.get('result') or {}
         text = ''
@@ -949,24 +1084,18 @@ class CoffeeShopHandler(http.server.SimpleHTTPRequestHandler):
             'reason': reason,
         })
 
+    # ------------------------------------------------------------------
+    # Settings drawer (BFF). Read-only, same-origin only (no CORS headers).
+    # ------------------------------------------------------------------
     def handle_settings(self):
-        parsed = urllib.parse.urlparse(self.path)
-        route = parsed.path
+        route = self.route_path
         if route not in ('/api/settings/hosting', '/api/settings/logs'):
             self._send_json(404, {'error': 'not_found'})
             return
-        if self._rate_limited():
-            self._send_json(429, {'error': 'rate_limited', 'message': 'Too many requests, slow down.'})
+        principal = self._require_principal('settings', SETTINGS_RATE_LIMIT, 'Sign in to view settings.')
+        if not principal:
             return
-        principal, err = self._settings_principal()
-        if err:
-            msg = 'Sign in to view settings.' if err == 401 else 'Identity provider unavailable.'
-            self._send_json(err, {'error': 'unauthorized' if err == 401 else 'idp_unavailable', 'message': msg})
-            return
-        if not principal['allowed']:
-            self._send_json(403, gate_denied_payload())
-            return
-        params = urllib.parse.parse_qs(parsed.query)
+        params = urllib.parse.parse_qs(self.route_query)
 
         try:
             if route == '/api/settings/hosting':
@@ -982,7 +1111,6 @@ class CoffeeShopHandler(http.server.SimpleHTTPRequestHandler):
                     'port': PORT,
                     'adkBackend': ADK_BACKEND,
                     'adkLive': is_adk_running(),
-                    'adkDevUi': f"{ADK_BACKEND.rstrip('/')}/dev-ui",
                     'model': MODEL_NAME or 'unknown',
                     'gatewayHostname': APIGEE_PROD_HOSTNAME,
                     'keycloakBase': KEYCLOAK_BASE,
@@ -1008,43 +1136,72 @@ class CoffeeShopHandler(http.server.SimpleHTTPRequestHandler):
             print(f"🚨 Settings handler error: {type(e).__name__}: {e}", flush=True)
             self._send_json(500, {'error': 'internal', 'message': 'Unexpected error.'})
 
-    def handle_oauth_exchange(self):
-        content_length = int(self.headers.get('Content-Length', 0))
-        body = json.loads(self.rfile.read(content_length).decode('utf-8')) if content_length > 0 else {}
-        code = body.get('code')
-        redirect_uri = body.get('redirect_uri', f'http://localhost:{PORT}/')
+    # ------------------------------------------------------------------
+    # OAuth (Keycloak authorization code + PKCE, refresh, logout). Same-origin
+    # only: no CORS headers. The client secret never leaves the server.
+    # ------------------------------------------------------------------
+    def _oauth_body(self):
+        """Rate-limit + parse an OAuth request body; None after sending an error."""
+        if rate_limited('oauth', self._client_key(), OAUTH_RATE_LIMIT):
+            self._send_json(429, {'error': 'rate_limited', 'message': 'Too many sign-in requests, slow down.'})
+            return None
+        try:
+            return self._read_json_body(16384)
+        except InputError as e:
+            self._send_json(400, {'error': 'invalid_request', 'message': str(e)})
+            return None
 
-        data = urllib.parse.urlencode({
-            'grant_type': 'authorization_code',
-            'client_id': KEYCLOAK_CLIENT_ID,
-            'client_secret': KEYCLOAK_CLIENT_SECRET,
-            'code': code,
-            'redirect_uri': redirect_uri
-        }).encode('utf-8')
+    def _redirect_uri_ok(self, redirect_uri):
+        """The redirect URI must point back at this very app (same host)."""
+        if not isinstance(redirect_uri, str) or len(redirect_uri) > 2048:
+            return False
+        parts = urllib.parse.urlsplit(redirect_uri)
+        return (parts.scheme in ('http', 'https') and parts.netloc == self.headers.get('Host', '')
+                and parts.path in ('/', '/index.html') and not parts.query and not parts.fragment)
 
+    def _keycloak_token_call(self, fields, kind):
+        data = urllib.parse.urlencode(dict(fields, client_id=KEYCLOAK_CLIENT_ID,
+                                           client_secret=KEYCLOAK_CLIENT_SECRET)).encode('utf-8')
         req = urllib.request.Request(f"{KEYCLOAK_BASE}/protocol/openid-connect/token", data=data)
         try:
             with urllib.request.urlopen(req, context=SSL_CTX, timeout=10) as resp:
-                token_data = resp.read()
-            self._send_gated_tokens(token_data, 'sign-in')
+                token_data = resp.read(256 * 1024)
+            self._send_gated_tokens(token_data, kind)
         except urllib.error.HTTPError as e:
-            err = e.read()
-            # Log upstream response: a non-4xx here (e.g. 403 from an egress
-            # proxy) means the request never reached Keycloak at all.
-            print(f"🚨 Keycloak token exchange failed: HTTP {e.code} from "
-                  f"{KEYCLOAK_BASE}/protocol/openid-connect/token -> "
-                  f"{err.decode('utf-8', errors='replace')}", flush=True)
-            self.send_response(e.code)
-            self.send_header('Content-Type', 'application/json')
-            self.send_header('Access-Control-Allow-Origin', '*')
-            self.end_headers()
-            self.wfile.write(err)
+            try:
+                err = json.loads(e.read(8192).decode('utf-8', 'replace'))
+            except ValueError:
+                err = {}
+            err = err if isinstance(err, dict) else {}
+            code = str(err.get('error') or 'token_request_failed')[:64]
+            desc = _short(err.get('error_description') or '', 200)
+            # A 400 invalid_grant on refresh is normal: the refresh token expired
+            # (30 min idle) or the session was revoked.
+            print(f"🔑 Keycloak {kind} rejected: HTTP {e.code} {code} {desc}", flush=True)
+            self._send_json(e.code if e.code in (400, 401) else 502,
+                            {'error': code, 'error_description': desc, 'message': desc or code})
         except Exception as e:
-            self.send_response(500)
-            self.send_header('Content-Type', 'application/json')
-            self.send_header('Access-Control-Allow-Origin', '*')
-            self.end_headers()
-            self.wfile.write(json.dumps({'error': str(e)}).encode('utf-8'))
+            print(f"🚨 Keycloak {kind} failed: {type(e).__name__}", flush=True)
+            self._send_json(502, {'error': 'idp_unreachable', 'message': 'Identity provider unreachable.'})
+
+    def handle_oauth_exchange(self):
+        body = self._oauth_body()
+        if body is None:
+            return
+        code = body.get('code')
+        verifier = body.get('code_verifier')
+        redirect_uri = body.get('redirect_uri')
+        if not isinstance(code, str) or not 1 <= len(code) <= 4096:
+            self._send_json(400, {'error': 'invalid_request', 'message': 'Missing authorization code.'})
+            return
+        if not isinstance(verifier, str) or not PKCE_VERIFIER_RE.match(verifier):
+            self._send_json(400, {'error': 'invalid_request', 'message': 'Missing or malformed PKCE code_verifier.'})
+            return
+        if not self._redirect_uri_ok(redirect_uri):
+            self._send_json(400, {'error': 'invalid_request', 'message': 'redirect_uri must point back to this app.'})
+            return
+        self._keycloak_token_call({'grant_type': 'authorization_code', 'code': code,
+                                   'redirect_uri': redirect_uri, 'code_verifier': verifier}, 'sign-in')
 
     def handle_oauth_refresh(self):
         """Exchange a refresh token for a new access token.
@@ -1054,48 +1211,14 @@ class CoffeeShopHandler(http.server.SimpleHTTPRequestHandler):
         the grant needs the confidential client secret, which must never be
         handed to the browser.
         """
-        content_length = int(self.headers.get('Content-Length', 0))
-        body = json.loads(self.rfile.read(content_length).decode('utf-8')) if content_length > 0 else {}
-        refresh_token = body.get('refresh_token')
-
-        if not refresh_token:
-            self.send_response(400)
-            self.send_header('Content-Type', 'application/json')
-            self.send_header('Access-Control-Allow-Origin', '*')
-            self.end_headers()
-            self.wfile.write(json.dumps({'error': 'missing refresh_token'}).encode('utf-8'))
+        body = self._oauth_body()
+        if body is None:
             return
-
-        data = urllib.parse.urlencode({
-            'grant_type': 'refresh_token',
-            'client_id': KEYCLOAK_CLIENT_ID,
-            'client_secret': KEYCLOAK_CLIENT_SECRET,
-            'refresh_token': refresh_token
-        }).encode('utf-8')
-
-        req = urllib.request.Request(f"{KEYCLOAK_BASE}/protocol/openid-connect/token", data=data)
-        try:
-            with urllib.request.urlopen(req, context=SSL_CTX, timeout=10) as resp:
-                token_data = resp.read()
-            self._send_gated_tokens(token_data, 'refresh')
-        except urllib.error.HTTPError as e:
-            err = e.read()
-            # A 400 invalid_grant here is normal and expected: the refresh token
-            # itself has expired (30 min idle) or the session was revoked. The
-            # client treats that as a genuine logout.
-            print(f"🔄 Keycloak token refresh rejected: HTTP {e.code} -> "
-                  f"{err.decode('utf-8', errors='replace')}", flush=True)
-            self.send_response(e.code)
-            self.send_header('Content-Type', 'application/json')
-            self.send_header('Access-Control-Allow-Origin', '*')
-            self.end_headers()
-            self.wfile.write(err)
-        except Exception as e:
-            self.send_response(500)
-            self.send_header('Content-Type', 'application/json')
-            self.send_header('Access-Control-Allow-Origin', '*')
-            self.end_headers()
-            self.wfile.write(json.dumps({'error': str(e)}).encode('utf-8'))
+        refresh_token = body.get('refresh_token')
+        if not isinstance(refresh_token, str) or not 1 <= len(refresh_token) <= 8192:
+            self._send_json(400, {'error': 'invalid_request', 'message': 'missing refresh_token'})
+            return
+        self._keycloak_token_call({'grant_type': 'refresh_token', 'refresh_token': refresh_token}, 'refresh')
 
     def _send_gated_tokens(self, token_data, kind):
         """Forward a Keycloak token response only if the user passes the role gate.
@@ -1115,234 +1238,249 @@ class CoffeeShopHandler(http.server.SimpleHTTPRequestHandler):
             revoke_tokens(tokens)
             self._send_json(403, gate_denied_payload())
             return
-        self.send_response(200)
-        self.send_header('Content-Type', 'application/json')
-        self.send_header('Cache-Control', 'no-store')
-        self.send_header('Access-Control-Allow-Origin', '*')
-        self.end_headers()
-        self.wfile.write(token_data)
-
-    def _send_userinfo(self, info_obj, auth_header):
-        """200 with userinfo, or 403 role_not_allowed when the gate refuses."""
-        claims = jwt_claims_unverified(auth_header.replace('Bearer ', '').strip())
-        if not variant_gate(claims):
-            self._send_json(403, gate_denied_payload())
-            return
-        payload = json.dumps(info_obj).encode('utf-8')
-        self.send_response(200)
-        self.send_header('Content-Type', 'application/json')
-        self.send_header('Cache-Control', 'no-store')
-        self.send_header('Access-Control-Allow-Origin', '*')
-        self.send_header('Content-Length', str(len(payload)))
-        self.end_headers()
-        self.wfile.write(payload)
+        self._send_json(200, tokens)
 
     def handle_oauth_userinfo(self):
-        auth_header = self.headers.get('Authorization', '')
-        if not auth_header:
-            self.send_response(401)
-            self.send_header('Content-Type', 'application/json')
-            self.send_header('Access-Control-Allow-Origin', '*')
-            self.end_headers()
-            self.wfile.write(b'{"active": false, "error": "missing_authorization_header"}')
+        """Validated userinfo for the caller's token (fails closed)."""
+        if not self.headers.get('Authorization'):
+            self._send_json(401, {'active': False, 'error': 'missing_authorization_header'})
             return
-
-        def parse_jwt_userinfo(raw_header):
-            try:
-                import base64
-                token = raw_header.replace('Bearer ', '').strip()
-                parts = token.split('.')
-                if len(parts) >= 2:
-                    b64 = parts[1] + '=' * (-len(parts[1]) % 4)
-                    payload = json.loads(base64.urlsafe_b64decode(b64.encode('utf-8')).decode('utf-8'))
-                    email = payload.get('email') or payload.get('preferred_username') or 'customer@biscuit-coffee.com'
-                    name = payload.get('name') or payload.get('preferred_username') or email
-                    if 'manager' in email and name == email:
-                        name = 'Alice (Manager)'
-                    elif 'customer' in email and name == email:
-                        name = 'John Smith'
-                    return {
-                        'sub': payload.get('sub'),
-                        'email': email,
-                        'preferred_username': payload.get('preferred_username', email),
-                        'name': name,
-                        'scope': payload.get('scope', ''),
-                        'realm_access': payload.get('realm_access', {}),
-                        'active': True
-                    }
-            except Exception:
-                pass
-            return None
-
-        req = urllib.request.Request(f"{KEYCLOAK_BASE}/protocol/openid-connect/userinfo")
-        req.add_header('Authorization', auth_header)
-        try:
-            with urllib.request.urlopen(req, context=SSL_CTX, timeout=10) as resp:
-                userinfo = json.loads(resp.read().decode('utf-8') or '{}')
-            self._send_userinfo(userinfo, auth_header)
+        principal, err = self._settings_principal()
+        if err:
+            self._send_json(err, {'active': False,
+                                  'error': 'invalid_or_expired_token' if err == 401 else 'idp_unavailable'})
             return
-        except urllib.error.HTTPError as e:
-            if e.code != 401:
-                jwt_info = parse_jwt_userinfo(auth_header)
-                if jwt_info:
-                    self._send_userinfo(jwt_info, auth_header)
-                    return
-            self.send_response(e.code)
-            self.send_header('Content-Type', 'application/json')
-            self.send_header('Access-Control-Allow-Origin', '*')
-            self.end_headers()
-            self.wfile.write(b'{"active": false, "error": "invalid_or_expired_token"}')
-        except Exception as e:
-            jwt_info = parse_jwt_userinfo(auth_header)
-            if jwt_info:
-                self._send_userinfo(jwt_info, auth_header)
-                return
-            self.send_response(500)
-            self.send_header('Content-Type', 'application/json')
-            self.send_header('Access-Control-Allow-Origin', '*')
-            self.end_headers()
-            self.wfile.write(json.dumps({'error': str(e)}).encode('utf-8'))
+        if not principal['allowed']:
+            self._send_json(403, gate_denied_payload())
+            return
+        info = dict(principal.get('userinfo') or {})
+        info['active'] = True
+        self._send_json(200, info)
 
     def handle_oauth_logout(self):
-        global ADK_PROC
-        content_length = int(self.headers.get('Content-Length', 0))
-        body = json.loads(self.rfile.read(content_length).decode('utf-8')) if content_length > 0 else {}
-        refresh_token = body.get('refresh_token')
+        """Sign out: delete the caller's own ADK sessions (uid from the verified
+        token) and revoke their Keycloak tokens. ADK is never restarted."""
+        body = self._oauth_body()
+        if body is None:
+            return
+        refresh = body.get('refresh_token')
+        refresh = refresh if isinstance(refresh, str) and 1 <= len(refresh) <= 8192 else None
+        access, deleted = None, 0
+        auth = self.headers.get('Authorization', '')
+        if auth.startswith('Bearer ') and len(auth) <= 8192:
+            principal, err = self._settings_principal()
+            if not err:
+                access = auth[7:].strip()
+                email = str(principal.get('email') or '').strip().lower()
+                if email:
+                    deleted = self._delete_user_sessions(email)
+            with SETTINGS_LOCK:
+                PRINCIPAL_CACHE.pop(hashlib.sha256(auth[7:].strip().encode('utf-8')).hexdigest(), None)
+        if refresh or access:
+            revoke_tokens({'refresh_token': refresh, 'access_token': access})
+        self._send_json(200, {'success': True, 'sessionsDeleted': deleted})
 
-        if refresh_token:
-            data = urllib.parse.urlencode({
-                'client_id': KEYCLOAK_CLIENT_ID,
-                'client_secret': KEYCLOAK_CLIENT_SECRET,
-                'refresh_token': refresh_token
-            }).encode('utf-8')
-            req = urllib.request.Request(f"{KEYCLOAK_BASE}/protocol/openid-connect/logout", data=data)
-            try:
-                with urllib.request.urlopen(req, context=SSL_CTX, timeout=10) as resp:
-                    pass
-            except Exception as e:
-                print("Keycloak logout warning:", e)
+    def _delete_user_sessions(self, uid):
+        base = f"/apps/{_q(ADK_APP_NAME)}/users/{_q(uid)}/sessions"
+        status, raw, _ = self._adk_call('GET', base, None, timeout=10)
+        if status != 200:
+            return 0
+        try:
+            sessions = json.loads(raw.decode('utf-8'))
+        except (ValueError, UnicodeDecodeError):
+            return 0
+        if isinstance(sessions, dict):
+            sessions = sessions.get('sessions') or []
+        deleted = 0
+        for s in sessions[:500] if isinstance(sessions, list) else []:
+            sid = s.get('id') if isinstance(s, dict) else None
+            if isinstance(sid, str) and SID_RE.match(sid):
+                st, _, _ = self._adk_call('DELETE', f"{base}/{_q(sid)}", None, timeout=10)
+                deleted += 1 if st in (200, 204) else 0
+        return deleted
 
-        # Flush in-memory sessions & credentials by restarting local ADK server if active
-        if ADK_PROC:
-            try:
-                print("🧹 Flushing ADK server in-memory session/credential cache...")
-                ADK_PROC.terminate()
-                ADK_PROC.wait(timeout=2)
-            except Exception:
-                try:
-                    ADK_PROC.kill()
-                except Exception:
-                    pass
-            ADK_PROC = ensure_adk_server()
+    # ------------------------------------------------------------------
+    # ADK proxy: exact route allow-list, caller identity bound to the uid.
+    # ------------------------------------------------------------------
+    def _adk_caller(self):
+        """-> (identity, None) or (None, (status, body)).
 
-        self.send_response(200)
-        self.send_header('Content-Type', 'application/json')
-        self.send_header('Access-Control-Allow-Origin', '*')
-        self.end_headers()
-        self.wfile.write(b'{"success": true}')
-
-    def _adk_refusal(self, target_path, method, body):
-        """-> (status, json) when an ADK request must not be forwarded, else None.
-
-        Each UI variant may only talk to its own agent, and tokens handed to the
-        agent in a run payload must pass the same role gate as a sign-in.
+        With a bearer token the token is validated with Keycloak (fail closed)
+        and the uid is the verified email. Without one, only guests on the
+        customer UI are allowed.
         """
-        m = re.match(r"^/apps/([^/?]+)", target_path)
-        if m and urllib.parse.unquote(m.group(1)) != ADK_APP_NAME:
-            return 403, {'error': 'wrong_agent', 'message': f'This UI only serves {ADK_APP_NAME}.'}
-        if method == 'POST' and re.match(r"^/run(_sse)?(\?|$)", target_path):
-            try:
-                payload = json.loads(body.decode('utf-8')) if body else {}
-            except (ValueError, UnicodeDecodeError):
-                return 400, {'error': 'bad_request', 'message': 'Run payload must be JSON.'}
-            if not isinstance(payload, dict):
-                return 400, {'error': 'bad_request', 'message': 'Run payload must be a JSON object.'}
-            if payload.get('appName') != ADK_APP_NAME:
-                return 403, {'error': 'wrong_agent', 'message': f'This UI only serves {ADK_APP_NAME}.'}
-            delta = payload.get('state_delta') or payload.get('stateDelta')
-            if isinstance(delta, dict):
-                token = delta.get('access_token') or ''
-                if token and not variant_gate(jwt_claims_unverified(token)):
-                    return 403, gate_denied_payload()
-                if IS_STAFF_UI and not token:
-                    return 401, {'error': 'unauthorized', 'message': 'Sign in with a staff account to chat.'}
+        if self.headers.get('Authorization'):
+            client = self._client_key()
+            if rate_limited('auth_fail', client, AUTH_FAIL_RATE_LIMIT, count=False):
+                return None, (429, {'error': 'rate_limited', 'message': 'Too many failed sign-ins, slow down.'})
+            principal, err = self._settings_principal()
+            if err:
+                if err == 401:
+                    rate_limited('auth_fail', client, AUTH_FAIL_RATE_LIMIT)
+                return None, (err, {'error': 'unauthorized' if err == 401 else 'idp_unavailable',
+                                    'message': 'Your session has expired. Please sign in again.'
+                                    if err == 401 else 'Identity provider unavailable.'})
+            if not principal['allowed']:
+                return None, (403, gate_denied_payload())
+            email = str(principal.get('email') or '').strip().lower()
+            if not email:
+                return None, (403, {'error': 'no_identity', 'message': 'Your token carries no email.'})
+            return {'uid': email, 'token': self.headers['Authorization'][7:].strip(),
+                    'principal': principal, 'rate_key': f"sub:{principal.get('sub') or email}"}, None
+        if IS_STAFF_UI:
+            return None, (401, {'error': 'unauthorized', 'message': 'Sign in with a staff account to chat.'})
+        return {'uid': None, 'token': '', 'principal': None, 'rate_key': self._client_key()}, None
+
+    @staticmethod
+    def _uid_refusal(ident, uid):
+        if not isinstance(uid, str):
+            return 400, {'error': 'bad_request', 'message': 'userId is required.'}
+        if ident['uid']:
+            if uid != ident['uid']:
+                return 403, {'error': 'user_mismatch', 'message': 'userId must be your signed-in account.'}
+            return None
+        if not GUEST_ID_RE.match(uid):
+            return 401, {'error': 'unauthorized', 'message': 'Sign in to use this account.'}
         return None
 
-    def proxy_to_adk(self, method):
-        target_path = self.path
-        if target_path.startswith("/api/"):
-            target_path = "/" + target_path[5:]
+    def _adk_call(self, method, path, data, timeout=30, accept='application/json'):
+        """-> (status, body bytes, content type). Only safe headers are sent."""
+        req = urllib.request.Request(f"{ADK_BACKEND.rstrip('/')}{path}", data=data, method=method)
+        if data is not None:
+            req.add_header('Content-Type', 'application/json')
+        req.add_header('Accept', accept)
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                return resp.status, resp.read(16 * 1024 * 1024), resp.headers.get('Content-Type', 'application/json')
+        except urllib.error.HTTPError as e:
+            content = e.read(64 * 1024)
+            print(f"🚨 ADK HTTP {e.code} on {method} {path}: {_short(content.decode('utf-8', 'replace'), 300)}", flush=True)
+            return e.code, content, 'application/json'
+        except Exception as e:
+            print(f"🚨 ADK unreachable on {method} {path}: {type(e).__name__}", flush=True)
+            return 502, json.dumps({'error': 'adk_unreachable',
+                                    'message': 'The agent runtime is unreachable.'}).encode('utf-8'), 'application/json'
 
-        target_url = f"{ADK_BACKEND.rstrip('/')}{target_path}"
-
-        content_length = int(self.headers.get('Content-Length', 0))
-        body = self.rfile.read(content_length) if content_length > 0 else None
-
-        refusal = self._adk_refusal(target_path, method, body)
+    def _build_run_payload(self, body, ident, streaming):
+        """-> (payload, None) or (None, (status, body)). Rebuilds the run request
+        from allowed fields; identity and token state are set server-side."""
+        app = _pick(body, 'appName', 'app_name')
+        if app != ADK_APP_NAME:
+            return None, (403, {'error': 'wrong_agent', 'message': f'This UI only serves {ADK_APP_NAME}.'})
+        uid = _pick(body, 'userId', 'user_id')
+        refusal = self._uid_refusal(ident, uid)
         if refusal:
-            self._send_json(*refusal)
+            return None, refusal
+        sid = _pick(body, 'sessionId', 'session_id')
+        if not isinstance(sid, str) or not SID_RE.match(sid):
+            return None, (400, {'error': 'bad_request', 'message': 'sessionId is missing or malformed.'})
+        new_message = _pick(body, 'newMessage', 'new_message')
+        if new_message is not None and not isinstance(new_message, dict):
+            return None, (400, {'error': 'bad_request', 'message': 'newMessage must be an object.'})
+        delta_in = _pick(body, 'stateDelta', 'state_delta')
+        delta_in = delta_in if isinstance(delta_in, dict) else {}
+        if ident['uid']:
+            name = delta_in.get('user_name')
+            name = re.sub(r"[\x00-\x1f\x7f]", " ", name).strip()[:80] if isinstance(name, str) else ''
+            state = {'access_token': ident['token'], 'is_authenticated': True, 'user_email': ident['uid'],
+                     'user_name': name, 'active_scope': ident['principal'].get('scope', '')}
+        else:
+            # Guests: any token a client tries to smuggle in is dropped.
+            state = {'access_token': '', 'is_authenticated': False, 'user_email': uid,
+                     'user_name': '', 'active_scope': ''}
+        payload = {'appName': app, 'userId': uid, 'sessionId': sid, 'stateDelta': state, 'streaming': streaming}
+        if new_message is not None:
+            payload['newMessage'] = new_message
+        for camel, snake in (('functionCallEventId', 'function_call_event_id'), ('invocationId', 'invocation_id')):
+            val = _pick(body, camel, snake)
+            if val is not None:
+                if not isinstance(val, str) or not re.fullmatch(r'[A-Za-z0-9_.:-]{1,128}', val):
+                    return None, (400, {'error': 'bad_request', 'message': f'{camel} is malformed.'})
+                payload[camel] = val
+        return payload, None
+
+    def proxy_to_adk(self, kind, params):
+        if kind == 'list_apps':
+            # Health probe; only reveals this UI's own app name.
+            if rate_limited('adk', self._client_key(), ADK_RATE_LIMIT):
+                self._send_json(429, {'error': 'rate_limited', 'message': 'Too many requests, slow down.'})
+                return
+            status, raw, _ = self._adk_call('GET', '/list-apps', None, timeout=5)
+            if status != 200:
+                self._send_raw(status, raw)
+                return
+            try:
+                apps = json.loads(raw.decode('utf-8'))
+            except (ValueError, UnicodeDecodeError):
+                apps = []
+            self._send_json(200, [a for a in apps if a == ADK_APP_NAME] if isinstance(apps, list) else [])
             return
 
-        req = urllib.request.Request(target_url, data=body, method=method)
-        for key, val in self.headers.items():
-            if key.lower() not in ('host', 'content-length'):
-                req.add_header(key, val)
+        ident, err = self._adk_caller()
+        if err:
+            self._send_json(*err)
+            return
+        if rate_limited('adk', ident['rate_key'], ADK_RATE_LIMIT):
+            self._send_json(429, {'error': 'rate_limited', 'message': 'Too many requests, slow down.'})
+            return
 
-        if target_path.startswith("/run_sse") and method == "POST":
-            return self._stream_from_adk(req, target_path)
+        if kind in ('create_session', 'delete_session'):
+            if params['app'] != ADK_APP_NAME:
+                self._send_json(403, {'error': 'wrong_agent', 'message': f'This UI only serves {ADK_APP_NAME}.'})
+                return
+            refusal = self._uid_refusal(ident, params['uid'])
+            if refusal:
+                self._send_json(*refusal)
+                return
+            path = f"/apps/{_q(ADK_APP_NAME)}/users/{_q(params['uid'])}/sessions"
+            if kind == 'create_session':
+                try:
+                    self._read_json_body(4096)   # drained; never forwarded (no client-chosen state)
+                except InputError as e:
+                    self._send_json(400, {'error': 'bad_request', 'message': str(e)})
+                    return
+                status, raw, ctype = self._adk_call('POST', path, b'{}')
+            else:
+                if not SID_RE.match(params['sid']):
+                    self._send_json(400, {'error': 'bad_request', 'message': 'Malformed session id.'})
+                    return
+                status, raw, ctype = self._adk_call('DELETE', f"{path}/{_q(params['sid'])}", None)
+            self._send_raw(status, raw, ctype)
+            return
 
+        # run / run_sse
         try:
-            with urllib.request.urlopen(req, timeout=30) as resp:
-                self.send_response(resp.status)
-                for header, val in resp.getheaders():
-                    if header.lower() not in ('transfer-encoding', 'content-length', 'access-control-allow-origin'):
-                        self.send_header(header, val)
-                self.send_header('Access-Control-Allow-Origin', '*')
-                content = resp.read()
-                self.send_header('Content-Length', str(len(content)))
-                self.end_headers()
-                self.wfile.write(content)
-        except urllib.error.HTTPError as e:
-            content = e.read()
-            print(f"🚨 ADK Proxy HTTPError {e.code} on {method} {target_path}: {content.decode('utf-8', errors='replace')}", flush=True)
-            self.send_response(e.code)
-            self.send_header('Access-Control-Allow-Origin', '*')
-            self.send_header('Content-Type', 'application/json')
-            self.send_header('Content-Length', str(len(content)))
-            self.end_headers()
-            self.wfile.write(content)
-        except Exception as e:
-            self.send_response(502)
-            self.send_header('Access-Control-Allow-Origin', '*')
-            self.send_header('Content-Type', 'application/json')
-            err_msg = f'{{"error": "ADK backend unreachable at {ADK_BACKEND}", "details": "{str(e)}"}}'.encode('utf-8')
-            self.send_header('Content-Length', str(len(err_msg)))
-            self.end_headers()
-            self.wfile.write(err_msg)
+            body = self._read_json_body(ADK_RUN_BODY_LIMIT)
+        except InputError as e:
+            self._send_json(400, {'error': 'bad_request', 'message': str(e)})
+            return
+        payload, err = self._build_run_payload(body, ident, streaming=(kind == 'run_sse'))
+        if err:
+            self._send_json(*err)
+            return
+        data = json.dumps(payload).encode('utf-8')
+        if kind == 'run_sse':
+            req = urllib.request.Request(f"{ADK_BACKEND.rstrip('/')}/run_sse", data=data, method='POST')
+            req.add_header('Content-Type', 'application/json')
+            req.add_header('Accept', 'text/event-stream')
+            self._stream_from_adk(req, '/run_sse')
+            return
+        status, raw, ctype = self._adk_call('POST', '/run', data, timeout=180)
+        self._send_raw(status, raw, ctype)
 
     def _stream_from_adk(self, req, target_path):
         """Relay ADK's Server-Sent Events as they arrive (no buffering), so the
         browser can render the reply while Gemini is still generating it."""
         try:
-            resp = urllib.request.urlopen(req, timeout=120)
+            resp = urllib.request.urlopen(req, timeout=180)
         except urllib.error.HTTPError as e:
-            content = e.read()
-            print(f"🚨 ADK Proxy HTTPError {e.code} on POST {target_path}: {content.decode('utf-8', errors='replace')}", flush=True)
-            self.send_response(e.code)
-            self.send_header('Access-Control-Allow-Origin', '*')
-            self.send_header('Content-Type', 'application/json')
-            self.send_header('Content-Length', str(len(content)))
-            self.end_headers()
-            self.wfile.write(content)
+            content = e.read(64 * 1024)
+            print(f"🚨 ADK HTTP {e.code} on POST {target_path}: {_short(content.decode('utf-8', 'replace'), 300)}", flush=True)
+            self._send_raw(e.code, content)
             return
         except Exception as e:
-            err_msg = json.dumps({"error": f"ADK backend unreachable at {ADK_BACKEND}", "details": str(e)}).encode('utf-8')
-            self.send_response(502)
-            self.send_header('Access-Control-Allow-Origin', '*')
-            self.send_header('Content-Type', 'application/json')
-            self.send_header('Content-Length', str(len(err_msg)))
-            self.end_headers()
-            self.wfile.write(err_msg)
+            print(f"🚨 ADK unreachable on POST {target_path}: {type(e).__name__}", flush=True)
+            self._send_json(502, {'error': 'adk_unreachable', 'message': 'The agent runtime is unreachable.'})
             return
 
         with resp:
@@ -1350,7 +1488,7 @@ class CoffeeShopHandler(http.server.SimpleHTTPRequestHandler):
             self.send_header('Content-Type', 'text/event-stream')
             self.send_header('Cache-Control', 'no-cache')
             self.send_header('X-Accel-Buffering', 'no')
-            self.send_header('Access-Control-Allow-Origin', '*')
+            self.send_header('Content-Security-Policy', "default-src 'none'; frame-ancestors 'none'")
             # No Content-Length: the body ends when the connection closes.
             self.send_header('Connection', 'close')
             self.end_headers()
@@ -1364,6 +1502,7 @@ class CoffeeShopHandler(http.server.SimpleHTTPRequestHandler):
                     self.wfile.flush()
             except (BrokenPipeError, ConnectionResetError):
                 pass  # browser went away mid-stream
+
 
 if __name__ == '__main__':
     ADK_PROC = ensure_adk_server()

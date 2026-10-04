@@ -13,30 +13,8 @@
   <!-- Favicon -->
   <link rel="icon" type="image/svg+xml" href="https://www.gstatic.com/bricks/image/b45728f17bf88494b25d78a9fb27ae538e6eb4a06a972f6502b7410ff714532d.svg">
   
-  <!-- Instant OAuth Popup Callback Interceptor -->
-  <script>
-    (function() {
-      try {
-        var searchParams = new URLSearchParams(window.location.search);
-        var hashParams = new URLSearchParams(window.location.hash ? window.location.hash.substring(1) : '');
-        var code = searchParams.get('code') || hashParams.get('code');
-        if (window.opener && code) {
-          window.opener.postMessage({
-            type: 'KEYCLOAK_OAUTH_CALLBACK',
-            authResponseUrl: window.location.href,
-            code: code,
-            state: searchParams.get('state') || hashParams.get('state')
-          }, '*');
-          window.close();
-        } else if (window.opener && (searchParams.has('logged_out') || searchParams.get('state') === 'logout')) {
-          window.opener.postMessage({ type: 'KEYCLOAK_LOGOUT_CALLBACK' }, '*');
-          window.close();
-        }
-      } catch (e) {
-        console.warn('OAuth popup interceptor:', e);
-      }
-    })();
-  </script>
+  <!-- OAuth popup callback (same-origin postMessage only; see the file) -->
+  <script src="js/oauth-callback.js"></script>
 
   <!-- Stylesheet -->
   <link rel="stylesheet" href="css/style.css">
@@ -468,11 +446,6 @@
           <button type="button" class="staff-tab" role="tab" data-staff-tab="chat">💬 Staff assistant</button>
         </nav>
         <div class="staff-console" id="staffConsole" data-variant-only="staff" hidden></div>
-        <!-- IFRAME OVERLAY FOR NATIVE ADK DEV-UI EMBED -->
-        <div class="iframe-container" id="iframeContainer">
-          <iframe class="adk-iframe" id="adkIframe" src="http://localhost:8000/dev-ui"></iframe>
-        </div>
-
         <!-- MAIN CHAT LAYOUT -->
         <div id="chatLayoutArea" style="display: flex; flex-direction: column; height: 100%; width: 100%;">
           <!-- TOOLBAR -->

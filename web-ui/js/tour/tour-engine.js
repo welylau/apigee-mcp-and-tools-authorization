@@ -389,15 +389,20 @@ export class GuidedTour {
     else if (s.kind === 'prompt') primary = '<button type="button" class="tour-btn tour-btn-primary" data-act="prompt">Use this prompt</button>';
     else if (s.action) primary = `<button type="button" class="tour-btn tour-btn-primary" data-act="action">${esc(resolve(s.action.label, this))}</button>`;
 
+    // Body/progress templates contain the missions' own markup; any context
+    // value they interpolate (order ids from tool results, storage) is escaped.
+    const safeCtx = Object.fromEntries(Object.entries(ctx || {}).map(([k, v]) =>
+      [k, (typeof v === 'string' || typeof v === 'number') ? esc(v) : v]));
+
     this.pop.innerHTML = `${CLOSE_BTN}
       <span class="tour-pop-arrow"></span>
       <div class="tour-pop-kicker">${kicker}</div>
       <h3 class="tour-pop-title">${esc(s.title)}</h3>
-      <div class="tour-pop-body">${resolve(s.body, ctx)}</div>
+      <div class="tour-pop-body">${resolve(s.body, safeCtx)}</div>
       ${s.kind === 'prompt' ? `<div class="tour-prompt-preview">“${esc(resolve(s.prompt, ctx))}”</div>` : ''}
       ${creds ? `${credsHowTo}<div class="tour-creds">${creds}</div>` : ''}
       ${s.expect ? `<div class="tour-expect">Expected: <b>${esc(s.expect)}</b></div>` : ''}
-      ${s.progress ? `<div class="tour-progress">${s.progress(ctx)}</div>` : ''}
+      ${s.progress ? `<div class="tour-progress">${s.progress(safeCtx)}</div>` : ''}
       ${wrongPersona ? `<div class="tour-warn">This step needs <b>${s.requires.map((p) => esc(PERSONA_LABEL[p])).join(' or ')}</b>. You're signed in as <b>${esc(PERSONA_LABEL[this.persona])}</b>.
           <button type="button" class="tour-btn tour-btn-small" data-act="auth">${this.persona === 'guest' ? 'Log in' : 'Log out'}</button></div>` : ''}
       ${this.hint ? `<div class="tour-hint">${this.hint}</div>` : ''}

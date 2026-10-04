@@ -13,13 +13,15 @@
 import {
   BOARD_COLUMNS, BULK_ACTIONS, BULK_CONFIRM_OVER, DATE_RANGES, DAYS, ORDER_FETCH_LIMIT, SELECTABLE_STATUSES,
   bucketOrders, bulkPlan, bulkSummary, decisionOutcome, extractList, extractOrders, filterByRange, formatMoney,
-  friendlyError, isSelectable, itemsSummary, maskPII, newPendingOrders, nextActions, normalizeStatus, orderId,
+  friendlyError, isSelectable, itemsSummary, maskPII, mergeOrders, newPendingOrders, nextActions, normalizeStatus, orderId,
   pendingIds, pruneSelection, sortNewestFirst, validRange, validateHours, validatePrice,
 } from './staff-utils.js';
 import { StaffAlerts } from './staff-alerts.js';
 
 const BOARD_REFRESH_MS = 10000;
 const LS_RANGE = 'biscuit.staff.orderRange';
+// Statuses the BFF accepts as expected_status (the "from" status of a change).
+const KNOWN_STATUS_RE = /^(PENDING_APPROVAL|IN_PROGRESS|READY|COMPLETED|COMPLETE|REJECTED|CANCELLED)$/;
 
 function lsGet(key) {
   try { return window.localStorage.getItem(key); } catch (e) { return null; }
@@ -280,11 +282,17 @@ export class StaffConsole {
         setBanner(this.boardBanner, r.status === 501 ? 'info' : 'error', friendlyError(r.status, r.body));
         return;
       }
+      // Pending orders are fetched on their own (the backend caps a page at
+      // 200) so the Pending column, counter and alerts always see all of them.
+      const p = await this.api('GET', `/api/staff/orders?status=PENDING_APPROVAL&limit=${ORDER_FETCH_LIMIT}`);
       this.lastBoardOk = true;
       if (manual || (this.boardBanner.classList.contains('error') || this.boardBanner.classList.contains('info'))) {
         setBanner(this.boardBanner, '', '');
       }
-      const orders = extractOrders(r.body.data);
+      const recent = extractOrders(r.body.data);
+      this.recentCount = recent.length;
+      const orders = p.ok ? mergeOrders(recent, extractOrders(p.body.data)) : recent;
+      if (!p.ok) console.warn('Pending-orders fetch failed:', p.status);
       this.allOrders = orders;
       // A background refresh must not wipe a reject reason that is being typed.
       const editing = !manual && !force && this.root.querySelector('.staff-card-actions input[type="text"]');
@@ -335,8 +343,8 @@ export class StaffConsole {
         : [el('div', { class: 'staff-empty', text: this.range === 'all' ? 'No orders' : 'No orders in this period' })]));
     }
 
-    this.limitNote.hidden = all.length < ORDER_FETCH_LIMIT;
-    this.limitNote.textContent = `Showing the latest ${ORDER_FETCH_LIMIT} orders.`;
+    this.limitNote.hidden = (this.recentCount ?? all.length) < ORDER_FETCH_LIMIT;
+    this.limitNote.textContent = `Showing the latest ${ORDER_FETCH_LIMIT} orders plus all pending orders.`;
 
     const hiddenPending = pendingIds(all).size - pendingIds(visible).size;
     this.hiddenPendingNote.replaceChildren();
@@ -417,11 +425,15 @@ export class StaffConsole {
     this.setSelection(this.selected);
     const done = [];
     const failed = [];
+    // The "from" status each order had on the board (optimistic concurrency hint).
+    const fromStatus = new Map((this.allOrders || []).map((o) => [orderId(o), normalizeStatus(o.status)]));
     try {
       for (let i = 0; i < plan.apply.length; i++) {
         const id = plan.apply[i];
         this.bulkProgress.textContent = `Updating ${i + 1}/${plan.apply.length}…`;
-        const r = await this.api('POST', `/api/staff/orders/${encodeURIComponent(id)}/status`, { status: target });
+        const body = { status: target };
+        if (KNOWN_STATUS_RE.test(fromStatus.get(id) || '')) body.expected_status = fromStatus.get(id);
+        const r = await this.api('POST', `/api/staff/orders/${encodeURIComponent(id)}/status`, body);
         if (r.ok) done.push(id);
         else {
           failed.push({ id, reason: friendlyError(r.status, r.body) });
@@ -459,7 +471,7 @@ export class StaffConsole {
         type: 'button', class: `staff-btn ${a.style}`, text: a.label,
         onclick: () => (a.kind === 'decision' && a.value === 'REJECT'
           ? this.askRejectReason(id, actionsRow, note)
-          : this.runOrderAction(id, a, null, actionsRow, note)),
+          : this.runOrderAction(id, a, null, actionsRow, note, status)),
       }));
     }
 
@@ -490,14 +502,18 @@ export class StaffConsole {
     const input = el('input', { type: 'text', class: 'staff-input', maxlength: '200', placeholder: 'Reason (optional)', 'aria-label': 'Reject reason' });
     const confirm = el('button', {
       type: 'button', class: 'staff-btn reject', text: 'Confirm reject',
-      onclick: () => this.runOrderAction(id, { kind: 'decision', value: 'REJECT' }, input.value.trim(), actionsRow, note),
+      onclick: () => this.runOrderAction(id, { kind: 'decision', value: 'REJECT' }, input.value.trim(), actionsRow, note, 'PENDING_APPROVAL'),
     });
     const cancel = el('button', { type: 'button', class: 'staff-btn ghost', text: 'Back', onclick: () => this.refreshBoard(false, true) });
     actionsRow.replaceChildren(input, confirm, cancel);
     input.focus();
   }
 
-  async runOrderAction(id, action, reason, actionsRow, note) {
+  /**
+   * @param fromStatus the status the card showed, sent as expected_status so
+   *   the backend can refuse a change made on a stale board.
+   */
+  async runOrderAction(id, action, reason, actionsRow, note, fromStatus = '') {
     actionsRow.querySelectorAll('button').forEach((b) => { b.disabled = true; });
     const path = action.kind === 'decision'
       ? `/api/staff/orders/${encodeURIComponent(id)}/decision`
@@ -505,6 +521,7 @@ export class StaffConsole {
     const body = action.kind === 'decision'
       ? { decision: action.value, ...(reason ? { reason: reason.slice(0, 200) } : {}) }
       : { status: action.value };
+    if (KNOWN_STATUS_RE.test(fromStatus || '')) body.expected_status = fromStatus;
     const r = await this.api('POST', path, body);
     if (!r.ok) {
       note.hidden = false;

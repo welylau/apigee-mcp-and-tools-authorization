@@ -367,7 +367,6 @@ export class SettingsPanel {
           el('span', { className: `s-dot ${rt.adkLive ? 'ok' : 'bad'}` }), ' ',
           el('span', { className: 's-mono', text: rt.adkBackend }),
         ])],
-        ['ADK Dev UI', safeLink(rt.adkDevUi)],
         ['Model', rt.model],
       ])),
       card('Identity provider (Keycloak)', kv([

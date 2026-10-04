@@ -1,7 +1,12 @@
 .git
 __pycache__
+**/__pycache__
 *.pyc
+**/*.pyc
 .DS_Store
+**/.DS_Store
 .venv
 .env
 .env.*
+**/.env
+**/.env.*

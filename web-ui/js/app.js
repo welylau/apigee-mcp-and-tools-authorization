@@ -8,6 +8,20 @@ import { SettingsPanel } from './settings-panel.js';
 import { GuidedTour } from './tour/tour-engine.js';
 import { StaffConsole } from './staff-console.js';
 import { roleFlags, variantAllows, gateMessage, initialTheme, themeStorageKey } from './staff-utils.js';
+import { beginAuthRequest, completeAuthRequest } from './oauth-pkce.js';
+
+/** Element with plain-text content (never parsed as HTML). */
+function textEl(tag, text = '', className = '') {
+  const el = document.createElement(tag);
+  if (className) el.className = className;
+  if (text !== '' && text !== null && text !== undefined) el.textContent = String(text);
+  return el;
+}
+
+// Static icon markup (constants in this file, never data).
+const LOCK_ICON_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>';
+const USERS_ICON_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M22 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>';
+const WRENCH_ICON_SVG = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>';
 
 // User Personas & Scopes (customer app). Store managers and staff are refused
 // by the customer app's role gate and use the Staff app instead.
@@ -234,8 +248,7 @@ export class App {
     this.signedOutPersona = this.isStaffUi ? STAFF_SIGNED_OUT_PERSONA : GUEST_PERSONA;
     this.currentRole = this.signedOutPersona;
     this.agentClient = new AdkAgentClient({
-      appName: uiConfig.appName || (this.isStaffUi ? 'coffee_agent_staff' : 'coffee_agent_prod'),
-      userId: 'guest@biscuit-coffee.com'
+      appName: uiConfig.appName || (this.isStaffUi ? 'coffee_agent_staff' : 'coffee_agent_prod')
     });
 
     this.messages = [];
@@ -546,7 +559,7 @@ export class App {
     if (this.statusDot && this.statusText) {
       if (status.available) {
         this.statusDot.className = 'status-dot';
-        this.statusText.textContent = `ADK Web Live (Port 8000)`;
+        this.statusText.textContent = 'ADK Live';
       } else {
         this.statusDot.className = 'status-dot simulated';
         this.statusText.textContent = '';
@@ -785,9 +798,21 @@ export class App {
 
   saveOrderWatchers() {
     try {
-      const list = [...this.pendingOrders.entries()].map(([id, w]) => ({ id, owner: w.owner, since: w.since }));
-      sessionStorage.setItem(this.orderWatchStorageKey(), JSON.stringify(list));
+      // Watches of other accounts stay stored for when they sign back in.
+      const me = this.currentRole && this.currentRole.email;
+      const others = this.readStoredWatchers().filter((w) => w && w.owner !== me);
+      const mine = [...this.pendingOrders.entries()].map(([id, w]) => ({ id, owner: w.owner, since: w.since }));
+      sessionStorage.setItem(this.orderWatchStorageKey(), JSON.stringify([...others, ...mine]));
     } catch (e) {}
+  }
+
+  readStoredWatchers() {
+    try {
+      const list = JSON.parse(sessionStorage.getItem(this.orderWatchStorageKey()) || '[]');
+      return Array.isArray(list) ? list : [];
+    } catch (e) {
+      return [];
+    }
   }
 
   isSignedIn() {
@@ -815,32 +840,52 @@ export class App {
     }
   }
 
-  resumeOrderWatchers() {
-    if (!this.isSignedIn()) return;
-    let list = [];
-    try {
-      list = JSON.parse(sessionStorage.getItem(this.orderWatchStorageKey()) || '[]');
-    } catch (e) {
-      list = [];
+  /**
+   * Signed out: stop polling entirely. The stored list is kept, so
+   * resumeOrderWatchers() picks the watches up again when the same customer
+   * signs back in.
+   */
+  pauseOrderWatchers() {
+    if (this.orderPollTimer) {
+      clearInterval(this.orderPollTimer);
+      this.orderPollTimer = null;
     }
-    for (const w of Array.isArray(list) ? list : []) {
+    this.pendingOrders.clear();
+  }
+
+  resumeOrderWatchers() {
+    if (!this.isSignedIn()) {
+      this.pauseOrderWatchers();
+      return;
+    }
+    // A different account signed in: drop the previous account's live watches.
+    for (const [id, w] of [...this.pendingOrders.entries()]) {
+      if (w.owner !== this.currentRole.email) this.pendingOrders.delete(id);
+    }
+    for (const w of this.readStoredWatchers()) {
       if (w && w.owner === this.currentRole.email && !this.pendingOrders.has(w.id)) {
         this.watchPendingOrder(w.id, Number(w.since) || Date.now());
       }
     }
+    if (this.pendingOrders.size > 0 && !this.orderPollTimer) {
+      this.orderPollTimer = setInterval(() => this.pollPendingOrders(), this.ORDER_POLL_MS);
+    }
   }
 
   async pollPendingOrders() {
+    // Only the customer who placed the order is told about it; signed out
+    // means no polling at all (resumed on the next sign-in).
+    if (!this.isSignedIn()) {
+      this.pauseOrderWatchers();
+      return;
+    }
     for (const [id, w] of [...this.pendingOrders.entries()]) {
       if (Date.now() - w.since > this.ORDER_WATCH_MAX_MS) {
         this.stopWatchingOrder(id);
         continue;
       }
-      // Only the customer who placed the order is told about it. A different
-      // signed-in user stops the watch; a temporary guest state just pauses it.
-      if (!this.isSignedIn()) continue;
       if (this.currentRole.email !== w.owner) {
-        this.stopWatchingOrder(id);
+        this.pendingOrders.delete(id);
         continue;
       }
       const token = this.agentClient.getStoredToken(this.currentRole.email);
@@ -858,9 +903,12 @@ export class App {
         }
         if (!res.ok) continue;              // 401 / 429 / 5xx: try again next tick
         const data = await res.json();
-        if (data.status === 'IN_PROGRESS' || data.status === 'REJECTED') {
+        const status = String((data && data.status) || '').toUpperCase();
+        // Anything other than PENDING_APPROVAL is final for the watcher: the
+        // order may have been approved and progressed between two polls.
+        if (status && status !== 'PENDING_APPROVAL') {
           this.stopWatchingOrder(id);
-          this.notifyOrderDecision(id, data);
+          this.notifyOrderDecision(id, { ...data, status });
         }
       } catch (e) {
         // Network hiccup: keep watching.
@@ -871,11 +919,19 @@ export class App {
   }
 
   notifyOrderDecision(orderId, data) {
-    const approved = data.status === 'IN_PROGRESS';
+    const status = String(data.status || '').toUpperCase();
+    const outcome = {
+      IN_PROGRESS: { tag: 'APPROVED', cls: 'success' },
+      READY: { tag: 'READY', cls: 'success' },
+      COMPLETED: { tag: 'COMPLETED', cls: 'success' },
+      COMPLETE: { tag: 'COMPLETED', cls: 'success' },
+      REJECTED: { tag: 'REJECTED', cls: 'policy-blocked' },
+      CANCELLED: { tag: 'CANCELLED', cls: 'policy-blocked' }
+    }[status] || { tag: status.slice(0, 20) || 'UPDATED', cls: 'success' };
     // The earlier PENDING badge for this order stops pulsing and shows the outcome.
     this.messagesArea.querySelectorAll(`[data-pending-order="${orderId}"]`).forEach((tag) => {
-      tag.className = `tool-status-tag ${approved ? 'success' : 'policy-blocked'}`;
-      tag.textContent = approved ? 'APPROVED' : 'REJECTED';
+      tag.className = `tool-status-tag ${outcome.cls}`;
+      tag.textContent = outcome.tag;
     });
     const first = String((this.currentRole && this.currentRole.name) || '').split(' ')[0] || 'there';
     const amount = typeof data.total_amount === 'number' ? ` ($${data.total_amount.toFixed(2)})` : '';
@@ -883,19 +939,37 @@ export class App {
     const reason = typeof data.reason === 'string'
       ? data.reason.replace(/[\u0000-\u001f\u007f<>\[\]()*_`\\]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 200)
       : '';
-    const text = approved
-      ? `✅ Good news, ${first}! The staff has approved your order ${orderId}${amount}. It's now being prepared.`
-      : `❌ Sorry, ${first}. The staff did not approve your order ${orderId}${amount}, so it won't be prepared.` +
-        (reason ? `\n\n**Reason from the staff:** “${reason}”` : '') +
-        `\n\nYou're welcome to place a smaller order, or ask me if you need help.`;
+    let text;
+    switch (status) {
+      case 'IN_PROGRESS':
+        text = `✅ Good news, ${first}! The staff has approved your order ${orderId}${amount}. It's now being prepared.`;
+        break;
+      case 'READY':
+        text = `🔔 Good news, ${first}! Your order ${orderId}${amount} was approved and is ready for pickup.`;
+        break;
+      case 'COMPLETED':
+      case 'COMPLETE':
+        text = `✅ Your order ${orderId}${amount} was approved and has been completed. Enjoy, ${first}!`;
+        break;
+      case 'REJECTED':
+        text = `❌ Sorry, ${first}. The staff did not approve your order ${orderId}${amount}, so it won't be prepared.` +
+          (reason ? `\n\n**Reason from the staff:** “${reason}”` : '') +
+          `\n\nYou're welcome to place a smaller order, or ask me if you need help.`;
+        break;
+      case 'CANCELLED':
+        text = `🚫 Your order ${orderId}${amount} was cancelled, ${first}. Ask me if you'd like to place it again.`;
+        break;
+      default:
+        text = `ℹ️ Your order ${orderId}${amount} is now ${outcome.tag}.`;
+    }
     this.appendMessage('agent', text, {
       name: 'Order approval',
       endpoint: 'Staff app → Apigee → decideOrder',
       policy: 'Staff decision in the Staff app',
       scopeRequired: 'biscuit_coffee_customer',
       enforcedBy: 'getOrder via Apigee (checked every 10 s while pending)',
-      status: approved ? 'APPROVED' : 'REJECTED',
-      statusClass: approved ? 'success' : 'policy-blocked',
+      status: outcome.tag,
+      statusClass: outcome.cls,
       success: true
     });
   }
@@ -1049,79 +1123,27 @@ export class App {
   }
 
   appendMessage(sender, text, toolCall = null, note = null) {
+    // Built with DOM APIs: only formatMarkdown() output (escaped, with
+    // http(s)-only links) is ever assigned as HTML. Tool names, gateway errors,
+    // notes and the sender name are text.
     const row = document.createElement('div');
     row.className = `message-row ${sender}`;
 
-    const now = new Date();
-    const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const avatar = textEl('div', sender === 'agent' ? '☕' : (this.currentRole.avatar || ''), 'msg-avatar');
+    const wrapper = textEl('div', '', 'msg-body-wrapper');
+    const meta = textEl('div', '', 'msg-meta');
+    meta.append(
+      textEl('span', sender === 'agent' ? 'Biscuit Coffee Agent' : (this.currentRole.name || '')),
+      textEl('span', '•'),
+      textEl('span', timeStr)
+    );
 
-    let avatarSymbol = sender === 'agent' ? '☕' : this.currentRole.avatar;
-    let senderName = sender === 'agent' ? 'Biscuit Coffee Agent' : this.currentRole.name;
+    const bubble = textEl('div', '', 'msg-bubble');
+    bubble.innerHTML = sender === 'agent' ? this.highlightKeyValues(this.formatMarkdown(text)) : this.formatMarkdown(text);
 
-    let toolCallHtml = '';
-    if (toolCall) {
-      const isSuccess = toolCall.success;
-      // The classifier supplies these for real gateway responses. The fallbacks
-      // keep the scripted demo in mock-agent.js rendering as it always has.
-      let statusClass = toolCall.statusClass || (isSuccess ? 'success' : 'forbidden');
-      let statusText = toolCall.statusNote
-        ? `${toolCall.status} (${toolCall.statusNote})`
-        : (isSuccess ? toolCall.status : `${toolCall.status} (Scope Blocked)`);
+    if (toolCall) bubble.appendChild(this.buildToolCard(toolCall, text));
 
-      let authActionHtml = '';
-      if (toolCall.isAuth) {
-        statusClass = 'auth-required';
-        statusText = 'Login Required';
-        const toolCallId = toolCall.id || ('auth_' + Math.random().toString(36).substring(2, 9));
-        this.activeAuthCalls.set(toolCallId, toolCall);
-
-        authActionHtml = `
-          <div class="tool-login-action-container">
-            <button type="button" class="tool-login-action-btn" id="loginBtn_${toolCallId}" onclick="window.biscuitApp.handleOAuthLogin('${toolCallId}')">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
-              <span>Login</span>
-            </button>
-          </div>
-        `;
-      } else if (!toolCall.isPolicyBlock &&
-                 (toolCall.needsManagerAuth || toolCall.status.includes('403') || toolCall.status.includes('401'))) {
-        // Only an authorisation failure is fixable by logging in. A rate limit or
-        // an over-value order is not, so those must not offer a Login button.
-        const isGuest = !this.currentRole || this.currentRole.id === 'guest';
-        if (isGuest) {
-          authActionHtml = `
-            <div class="tool-login-action-container">
-              <button type="button" class="tool-login-action-btn" onclick="window.biscuitApp.triggerDirectLogin()">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M22 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>
-                <span>Login</span>
-              </button>
-            </div>
-          `;
-        }
-      }
-
-      toolCallHtml = `
-        <div class="tool-execution-card">
-          <div class="tool-card-header">
-            <div class="tool-name-badge">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
-              <span>${toolCall.name}</span>
-            </div>
-            <span class="tool-status-tag ${statusClass}"${toolCall.pendingOrderId && /^[A-Za-z0-9_-]{1,64}$/.test(toolCall.pendingOrderId) ? ` data-pending-order="${toolCall.pendingOrderId}"` : ''}>${statusText}</span>
-          </div>
-          <div class="tool-details-content">
-            <div><strong>Apigee Flow:</strong> <code>${toolCall.endpoint}</code></div>
-            <div><strong>Policy Executed:</strong> <code>${toolCall.policy}</code></div>
-            <div><strong>Required Scope:</strong> <code>${toolCall.scopeRequired}</code></div>
-            ${toolCall.enforcedBy ? `<div><strong>Enforced By:</strong> <code>${toolCall.enforcedBy}</code></div>` : ''}
-            ${(toolCall.error && !this.isEchoedInMessage(toolCall.error, text)) ? `<div style="color: ${toolCall.isPolicyBlock ? 'var(--warning)' : 'var(--danger)'}"><strong>${toolCall.resultLabel || 'Security Result'}:</strong> ${toolCall.error}</div>` : ''}
-            ${authActionHtml}
-          </div>
-        </div>
-      `;
-    }
-
-    let inlineLoginHtml = '';
     const isGuest = !this.currentRole || this.currentRole.id === 'guest';
     if (sender === 'agent' && isGuest && (!toolCall || (!toolCall.isAuth && !toolCall.needsManagerAuth && toolCall.success))) {
       const textLower = (text || '').toLowerCase();
@@ -1129,41 +1151,21 @@ export class App {
                             textLower.includes('sign in') ||
                             textLower.includes('authenticate with keycloak') ||
                             textLower.includes('requires authentication');
-
       if (mentionsLogin) {
-        inlineLoginHtml = `
-          <div class="tool-login-action-container" style="margin-top: 10px;">
-            <button type="button" class="tool-login-action-btn" onclick="window.biscuitApp.triggerDirectLogin()">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
-              <span>Login</span>
-            </button>
-          </div>
-        `;
+        const box = this.loginActionBox(LOCK_ICON_SVG, () => this.triggerDirectLogin());
+        box.style.marginTop = '10px';
+        bubble.appendChild(box);
       }
     }
 
-    let noteHtml = '';
     if (note) {
-      noteHtml = `<div style="font-size: 11px; color: var(--warning); margin-top: 4px;">ℹ️ ${note}</div>`;
+      const noteEl = textEl('div', `ℹ️ ${note}`);
+      noteEl.style.cssText = 'font-size: 11px; color: var(--warning); margin-top: 4px;';
+      bubble.appendChild(noteEl);
     }
 
-    row.innerHTML = `
-      <div class="msg-avatar">${avatarSymbol}</div>
-      <div class="msg-body-wrapper">
-        <div class="msg-meta">
-          <span>${senderName}</span>
-          <span>•</span>
-          <span>${timeStr}</span>
-        </div>
-        <div class="msg-bubble">
-          ${sender === 'agent' ? this.highlightKeyValues(this.formatMarkdown(text)) : this.formatMarkdown(text)}
-          ${toolCallHtml}
-          ${inlineLoginHtml}
-          ${noteHtml}
-        </div>
-      </div>
-    `;
-
+    wrapper.append(meta, bubble);
+    row.append(avatar, wrapper);
     this.messagesArea.appendChild(row);
     this.scrollToBottom();
 
@@ -1172,74 +1174,84 @@ export class App {
     }
   }
 
+  /** "Login" button row; the icon is a static SVG string from this file. */
+  loginActionBox(iconSvg, onClick, id = '') {
+    const box = textEl('div', '', 'tool-login-action-container');
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'tool-login-action-btn';
+    if (id) btn.id = id;
+    btn.innerHTML = iconSvg;
+    btn.appendChild(textEl('span', 'Login'));
+    btn.addEventListener('click', onClick);
+    box.appendChild(btn);
+    return box;
+  }
+
+  buildToolCard(toolCall, text) {
+    const isSuccess = toolCall.success;
+    // The classifier supplies these for real gateway responses. The fallbacks
+    // keep the scripted demo in mock-agent.js rendering as it always has.
+    let statusClass = toolCall.statusClass || (isSuccess ? 'success' : 'forbidden');
+    let statusText = toolCall.statusNote
+      ? `${toolCall.status} (${toolCall.statusNote})`
+      : (isSuccess ? toolCall.status : `${toolCall.status} (Scope Blocked)`);
+
+    let authAction = null;
+    if (toolCall.isAuth) {
+      statusClass = 'auth-required';
+      statusText = 'Login Required';
+      const toolCallId = String(toolCall.id || ('auth_' + Math.random().toString(36).substring(2, 9)));
+      this.activeAuthCalls.set(toolCallId, toolCall);
+      authAction = this.loginActionBox(LOCK_ICON_SVG, () => this.handleOAuthLogin(toolCallId), `loginBtn_${toolCallId}`);
+    } else if (!toolCall.isPolicyBlock &&
+               (toolCall.needsManagerAuth || String(toolCall.status || '').includes('403') || String(toolCall.status || '').includes('401'))) {
+      // Only an authorisation failure is fixable by logging in. A rate limit or
+      // an over-value order is not, so those must not offer a Login button.
+      const isGuest = !this.currentRole || this.currentRole.id === 'guest';
+      if (isGuest) authAction = this.loginActionBox(USERS_ICON_SVG, () => this.triggerDirectLogin());
+    }
+
+    const card = textEl('div', '', 'tool-execution-card');
+    const header = textEl('div', '', 'tool-card-header');
+    const badge = textEl('div', '', 'tool-name-badge');
+    badge.innerHTML = WRENCH_ICON_SVG;
+    badge.appendChild(textEl('span', toolCall.name));
+    const tag = textEl('span', statusText, `tool-status-tag ${String(statusClass).replace(/[^A-Za-z0-9_ -]/g, '')}`);
+    if (toolCall.pendingOrderId && /^[A-Za-z0-9_-]{1,64}$/.test(toolCall.pendingOrderId)) {
+      tag.dataset.pendingOrder = toolCall.pendingOrderId;
+    }
+    header.append(badge, tag);
+
+    const details = textEl('div', '', 'tool-details-content');
+    const line = (label, value) => {
+      const d = document.createElement('div');
+      d.append(textEl('strong', `${label}:`), ' ', textEl('code', value));
+      details.appendChild(d);
+    };
+    line('Apigee Flow', toolCall.endpoint);
+    line('Policy Executed', toolCall.policy);
+    line('Required Scope', toolCall.scopeRequired);
+    if (toolCall.enforcedBy) line('Enforced By', toolCall.enforcedBy);
+    if (toolCall.error && !this.isEchoedInMessage(toolCall.error, text)) {
+      const d = document.createElement('div');
+      d.style.color = toolCall.isPolicyBlock ? 'var(--warning)' : 'var(--danger)';
+      d.append(textEl('strong', `${toolCall.resultLabel || 'Security Result'}:`), ' ', String(toolCall.error));
+      details.appendChild(d);
+    }
+    if (authAction) details.appendChild(authAction);
+
+    card.append(header, details);
+    return card;
+  }
+
   async handleOAuthLogin(toolCallId) {
-    const toolCall = this.activeAuthCalls.get(toolCallId);
-    if (!toolCall || !toolCall.authUri) {
-      console.error('No authUri found for tool call:', toolCallId);
-      return;
-    }
-
-    const btn = document.getElementById(`loginBtn_${toolCallId}`);
-    if (btn) {
-      btn.classList.add('logging-in');
-      btn.innerHTML = `
-        <svg class="spin-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
-        <span>Waiting for Keycloak Sign-in...</span>
-      `;
-    }
-
-    try {
-      // 1. Open Keycloak 3-legged OAuth popup. prompt=login forces the
-      //    credentials form even when a Keycloak SSO session already exists,
-      //    so a staff session can never silently sign in to the customer app.
-      let authUri = toolCall.authUri;
-      try {
-        const u = new URL(authUri);
-        u.searchParams.set('prompt', 'login');
-        authUri = u.toString();
-      } catch (e) { /* leave non-URL values untouched */ }
-      const authResponseUrl = await this.openOAuthPopup(authUri);
-
-      // 2. Update button status to authenticated
-      if (btn) {
-        btn.classList.remove('logging-in');
-        btn.classList.add('authenticated');
-        btn.innerHTML = `
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 6L9 17l-5-5"/></svg>
-          <span>Authenticated! Resuming Agent...</span>
-        `;
-      }
-
-      // 3. Show typing indicator
-      const typingElement = this.showTypingIndicator();
-
-      // 4. Send token authorization code response to ADK
-      const result = await this.agentClient.sendOAuthResponse(
-        toolCall.rawFunctionCall,
-        authResponseUrl,
-        toolCall.redirectUri
-      );
-
-      // 5. Remove typing indicator
-      typingElement.remove();
-
-      // 6. Append agent's real response
-      this.appendMessage('agent', result.text, result.toolCall, result.liveError);
-      this.emitToolResult(result);
-
-      // 7. Refresh Auth UI to show active token
-      await this.refreshAuthUI();
-    } catch (err) {
-      console.error('Keycloak OAuth login failed:', err);
-      if (btn) {
-        btn.classList.remove('logging-in');
-        btn.innerHTML = `
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
-          <span>Retry Login</span>
-        `;
-      }
-      this.appendMessage('agent', `⚠️ OAuth notice: ${err.message || err}`);
-    }
+    // The agent receives the user's token with every run (see the BFF), so an
+    // adk_request_credential prompt is satisfied by the app's own Keycloak
+    // sign-in (authorization code + PKCE); the user then repeats the request.
+    this.activeAuthCalls.delete(toolCallId);
+    await this.triggerDirectLogin();
+    if (this.isSignedIn()) this.addSystemNotice('Signed in. Please send your request again.');
   }
 
   openOAuthPopup(authUri) {
@@ -1255,14 +1267,15 @@ export class App {
       );
 
       if (!popup || popup.closed || typeof popup.closed === 'undefined') {
-        reject(new Error('Popup window was blocked by browser. Please allow popups for localhost.'));
+        reject(new Error('Popup window was blocked by browser. Please allow popups for this site.'));
         return;
       }
 
       const messageListener = (event) => {
-        if (event.origin !== window.location.origin) return;
+        // Same-origin callback page only (js/oauth-callback.js), from our popup.
+        if (event.origin !== window.location.origin || event.source !== popup) return;
         const data = event.data;
-        if (data && data.authResponseUrl) {
+        if (data && data.type === 'KEYCLOAK_OAUTH_CALLBACK' && typeof data.authResponseUrl === 'string') {
           window.removeEventListener('message', messageListener);
           clearInterval(pollTimer);
           resolve(data.authResponseUrl);
@@ -1301,13 +1314,22 @@ export class App {
 
   formatMarkdown(raw) {
     if (!raw) return '';
-    let html = raw
-      // HTML escaping
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      // Markdown links [text](url)
-      .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>')
+    const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    // Links are pulled out first so the URL is validated (http/https only) and
+    // the label/URL are escaped on their own, never re-processed as markdown.
+    const links = [];
+    const text = String(raw).replace(/\u0000/g, '').replace(/\[([^\]\n]+)\]\(([^)\s]+)\)/g, (m, label, url) => {
+      let href = '';
+      try {
+        const u = new URL(url, window.location.href);
+        if (u.protocol === 'http:' || u.protocol === 'https:') href = u.href;
+      } catch (e) { /* not a URL: leave the text as it is */ }
+      if (!href) return m;
+      links.push({ label, href });
+      return `\u0000${links.length - 1}\u0000`;
+    });
+
+    let html = esc(text)
       // Bold
       .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
       // Italics
@@ -1325,7 +1347,10 @@ export class App {
       html = html.replace(/(<li>.*?<\/li>)+/g, '<ul>$&</ul>');
     }
 
-    return html;
+    return html.replace(/\u0000(\d+)\u0000/g, (m, i) => {
+      const link = links[Number(i)];
+      return link ? `<a href="${esc(link.href)}" target="_blank" rel="noopener noreferrer">${esc(link.label)}</a>` : '';
+    });
   }
 
   /**
@@ -1475,7 +1500,7 @@ export class App {
           scopeDescription: scopeDescription
         };
 
-        this.agentClient.userId = email;
+        this.agentClient.userId = String(email).toLowerCase();
         this.renderRoleContext();
 
         // 1. Header Button update (if present)
@@ -1509,7 +1534,7 @@ export class App {
       } else {
         // Not logged in / Token Expired
         this.currentRole = this.signedOutPersona;
-        if (!this.agentClient.userId || !this.agentClient.userId.startsWith('guest')) {
+        if (!this.agentClient.isGuestId(this.agentClient.userId)) {
           this.agentClient.userId = this.agentClient.generateGuestId();
         }
         this.renderRoleContext();
@@ -1606,7 +1631,8 @@ export class App {
     const currentOrigin = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000';
     const currentPath = typeof window !== 'undefined' ? window.location.pathname : '/';
     const redirectUri = `${currentOrigin}${currentPath}`;
-    const state = 'state_' + Math.random().toString(36).substring(2, 12);
+    // Random state (CSRF) + PKCE S256; both checked when the popup reports back.
+    const pending = await beginAuthRequest();
 
     const cfg = this.uiConfig || {};
     const authEndpoint = cfg.keycloakAuthEndpoint ||
@@ -1618,7 +1644,9 @@ export class App {
         ? 'openid biscuit_coffee_staff biscuit_coffee_manager'
         : 'openid biscuit_coffee_customer'),
       redirect_uri: redirectUri,
-      state: state,
+      state: pending.state,
+      code_challenge: pending.codeChallenge,
+      code_challenge_method: 'S256',
       // Always show the Keycloak form, even with an existing SSO session.
       prompt: 'login'
     });
@@ -1639,14 +1667,11 @@ export class App {
 
     try {
       const authResponseUrl = await this.openOAuthPopup(authUrl);
-      const u = new URL(authResponseUrl);
-      const code = u.searchParams.get('code');
-      if (!code) {
-        throw new Error('Keycloak completed without providing an authorization code.');
-      }
+      const { code, codeVerifier } = completeAuthRequest(authResponseUrl, pending);
 
-      await this.agentClient.exchangeAuthCode(code, redirectUri);
+      await this.agentClient.exchangeAuthCode(code, redirectUri, codeVerifier);
       await this.refreshAuthUI();
+      this.resumeOrderWatchers();
 
       this.addSystemNotice(`✅ Successfully signed in to Keycloak as **${this.currentRole.name}** (\`${this.currentRole.email}\`).`);
     } catch (err) {
@@ -1675,6 +1700,7 @@ export class App {
     try {
       const prevName = this.currentRole.name;
       const prevEmail = this.currentRole.email;
+      this.pauseOrderWatchers();
       await this.agentClient.logoutKeycloak();
       this.currentRole = this.signedOutPersona;
 
@@ -1684,6 +1710,7 @@ export class App {
       console.warn('Logout notice:', err);
     } finally {
       await this.refreshAuthUI();
+      this.resumeOrderWatchers();
     }
   }
 }
