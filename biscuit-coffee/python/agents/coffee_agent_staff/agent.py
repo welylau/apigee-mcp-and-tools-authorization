@@ -132,9 +132,29 @@ def get_instruction(context: ReadonlyContext) -> str:
 #   * McpError sentences ("MCP tool execution failed: <sentence>", e.g. 429),
 #   * error bodies {"error": "<code>", "message": "<sentence>"} such as
 #     403 insufficient_scope (barista asking for employees), 404, 409,
-#   * FastAPI-style {"detail": "<sentence>"} on an isError result.
+#   * FastAPI-style backend errors on an isError result:
+#     {"detail": {"message": "<sentence>"}} (404 / 409 from the backend),
+#     {"detail": "<sentence>"}, and validation lists {"detail": [{"msg": ...}]}.
 # Successful results are summarised by the model (tables, one-line confirms).
 # ---------------------------------------------------------------------------
+def error_sentence(body: Any) -> Optional[str]:
+    """The user-facing sentence in a gateway / backend error body, if any."""
+    if isinstance(body, str):
+        return body.strip() or None
+    if isinstance(body, dict):
+        for key in ("message", "detail"):
+            msg = error_sentence(body.get(key))
+            if msg:
+                return msg
+        return None
+    if isinstance(body, list):
+        msgs = [m for m in (error_sentence(item) if not isinstance(item, dict) else
+                            (error_sentence(item.get("msg")) or error_sentence(item.get("message")))
+                            for item in body[:3]) if m]
+        return "; ".join(msgs) or None
+    return None
+
+
 def gateway_message(tool_name: str, tool_response: Any) -> Optional[str]:
     if not isinstance(tool_response, dict):
         return None
@@ -150,10 +170,7 @@ def gateway_message(tool_name: str, tool_response: Any) -> Optional[str]:
     is_error = bool(tool_response.get("isError")) or bool(body.get("error"))
     if not is_error:
         return None
-    for key in ("message", "detail"):
-        if isinstance(body.get(key), str) and body[key].strip():
-            return body[key].strip()
-    return None
+    return error_sentence(body)
 
 
 relay_gateway_message = make_relay_callback(gateway_message)

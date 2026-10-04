@@ -6,9 +6,10 @@ authors = [
     {name = "David Rush",email = "davidrush@google.com"}
 ]
 requires-python = ">=3.13,<4.0"
+# The agents use only google-adk (MCP toolset, callbacks, `adk web`).
+# a2a-sdk and the [agent-identity] extra were never imported anywhere.
 dependencies = [
-    "google-adk[agent-identity]>=1.32.0,<2.0.0",
-    "a2a-sdk>=0.3.4,<0.4.0"
+    "google-adk>=1.32.0,<2.0.0",
 ]
 
 [build-system]

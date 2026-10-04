@@ -1,6 +1,6 @@
 """MCP tools for the staff agent (coffee_agent_staff)."""
 
-from biscuit_common import get_current_time, make_header_provider, make_mcp_toolset  # noqa: F401
+from biscuit_common import get_current_time, make_mcp_toolset  # noqa: F401 - get_current_time used by agent.py
 
 from .auth_config import CLIENT_ID
 
@@ -23,7 +23,5 @@ STAFF_TOOLS = [
     "updateMenuItem",
     "getSalesStats",
 ]
-
-staff_header_provider = make_header_provider(CLIENT_ID)
 
 mcp_toolset = make_mcp_toolset(CLIENT_ID, tool_filter=STAFF_TOOLS)

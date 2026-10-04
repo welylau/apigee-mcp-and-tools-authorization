@@ -83,6 +83,48 @@ POLICY_FAULT_STATUSES = frozenset({429})
 POLICY_DENIAL_STATUSES = frozenset({401, 403})
 DENIED_MESSAGE = "This operation is not available to your account."
 
+# Apigee answers an expired user token with HTTP 401 and a JSON-RPC body whose
+# text carries the JWT-VerifyToken fault (steps.jwt.TokenExpired). That is not
+# an access problem, so tell the user to sign in again instead.
+SESSION_EXPIRED_MESSAGE = (
+    "Your sign-in has expired. Please sign in again and then repeat your request."
+)
+_EXPIRED_MARKERS = (b"TokenExpired", b"Token has expired", b"token has expired")
+
+# Headers that describe the wire encoding of the original body. They are wrong
+# once the body has been read (decoded) and re-sent as plain bytes.
+_WIRE_HEADERS = frozenset({"content-encoding", "content-length", "transfer-encoding"})
+
+
+def _is_expired_token(raw: bytes) -> bool:
+    return any(marker in (raw or b"") for marker in _EXPIRED_MARKERS)
+
+
+def _decoded_headers(headers: httpx.Headers) -> list[tuple[str, str]]:
+    return [(k, v) for k, v in headers.multi_items() if k.lower() not in _WIRE_HEADERS]
+
+
+def _tool_error_response(
+    request: httpx.Request, rpc: dict, error_code: str, message: str
+) -> httpx.Response:
+    """A JSON-RPC tools/call result with isError=True (local HTTP 200)."""
+    result = {
+        "jsonrpc": "2.0",
+        "id": rpc.get("id"),
+        "result": {
+            "content": [
+                {"type": "text", "text": json.dumps({"error": error_code, "message": message})}
+            ],
+            "isError": True,
+        },
+    }
+    return httpx.Response(
+        200,
+        headers={"content-type": "application/json"},
+        content=json.dumps(result).encode(),
+        request=request,
+    )
+
 
 class PolicyFaultPassthroughTransport(httpx.AsyncBaseTransport):
     """Lets JSON-RPC error bodies survive non-2xx gateway responses."""
@@ -141,15 +183,24 @@ class PolicyFaultPassthroughTransport(httpx.AsyncBaseTransport):
         if not isinstance(rpc, dict) or rpc.get("method") != "tools/call":
             return response
 
+        # aread() returns the DECODED body (gzip etc. already undone), so any
+        # response we build from it must not carry the original
+        # content-encoding / content-length / transfer-encoding headers.
         raw = await response.aread()
         await response.aclose()
+        tool_name = (rpc.get("params") or {}).get("name")
+
+        if response.status_code == 401 and _is_expired_token(raw):
+            logger.info("Gateway rejected tools/call %s: user token expired.", tool_name)
+            return _tool_error_response(request, rpc, "session_expired", SESSION_EXPIRED_MESSAGE)
+
         message = DENIED_MESSAGE
         error_code = "access_denied"
         try:
             body = json.loads(raw)
             if isinstance(body, dict):
                 if "jsonrpc" in body:  # already JSON-RPC: just let the SDK parse it
-                    return httpx.Response(200, headers=response.headers, content=raw, request=request)
+                    return httpx.Response(200, headers=_decoded_headers(response.headers), content=raw, request=request)
                 if isinstance(body.get("message"), str) and body["message"].strip():
                     message = body["message"].strip()
                 if isinstance(body.get("error"), str):
@@ -159,25 +210,10 @@ class PolicyFaultPassthroughTransport(httpx.AsyncBaseTransport):
 
         logger.info(
             "Gateway denied tools/call %s with HTTP %s; returning it to the agent as a tool error.",
-            (rpc.get("params") or {}).get("name"),
+            tool_name,
             response.status_code,
         )
-        result = {
-            "jsonrpc": "2.0",
-            "id": rpc.get("id"),
-            "result": {
-                "content": [
-                    {"type": "text", "text": json.dumps({"error": error_code, "message": message})}
-                ],
-                "isError": True,
-            },
-        }
-        return httpx.Response(
-            200,
-            headers={"content-type": "application/json"},
-            content=json.dumps(result).encode(),
-            request=request,
-        )
+        return _tool_error_response(request, rpc, error_code, message)
 
     async def __aenter__(self):
         await self._inner.__aenter__()

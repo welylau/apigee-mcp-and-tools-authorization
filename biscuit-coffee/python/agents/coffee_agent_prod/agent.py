@@ -113,10 +113,12 @@ def get_instruction(context: ReadonlyContext) -> str:
 # Gateway message relay (see biscuit_common.make_relay_callback)
 #
 # Relayed:  422 order_limit_exceeded, 404 order_not_found, 429 quota (arrives as
-#           "MCP tool execution failed: <sentence>"), successful order confirmation.
+#           "MCP tool execution failed: <sentence>"), 401 expired sign-in
+#           (session_expired, built by the biscuit_common transport), successful
+#           order confirmation.
 # Not relayed: anything else - the model writes the reply.
 # ---------------------------------------------------------------------------
-RELAY_CODES = {"order_limit_exceeded", "order_not_found"}
+RELAY_CODES = {"order_limit_exceeded", "order_not_found", "session_expired"}
 
 
 def gateway_message(tool_name: str, tool_response: Any) -> Optional[str]:
