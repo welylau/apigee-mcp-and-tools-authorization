@@ -3,12 +3,22 @@ set -euo pipefail
 
 KEYCLOAK_CONTAINER="keycloak"
 ADMIN_USER="admin"
+# Secrets come from the environment only - never hard-code them here.
+#   KC_ADMIN_PASS='...' CLIENT_SECRET='...' [CUSTOMER_UI_URL='https://<customer-ui>.run.app'] ./setup_apigee_realm.sh
 ADMIN_PASS="YOUR_KEYCLOAK_ADMIN_PASSWORD"
 REALM_NAME="apigee-demo"
 CLIENT_ID="biscuit-coffee-agent"
 CLIENT_SECRET="YOUR_KEYCLOAK_CLIENT_SECRET"
 DEMO_USER="customer@biscuit-coffee.com"
 DEMO_PASS="ilovecoffee"
+
+# Exact redirect URIs / web origins (no "*"): local UI plus the optional Cloud Run URL.
+REDIRECT_URIS='"http://localhost:3000/*","http://127.0.0.1:3000/*"'
+WEB_ORIGINS='"http://localhost:3000","http://127.0.0.1:3000"'
+if [ -n "${CUSTOMER_UI_URL:-}" ]; then
+  REDIRECT_URIS="$REDIRECT_URIS,\"${CUSTOMER_UI_URL%/}/*\""
+  WEB_ORIGINS="$WEB_ORIGINS,\"${CUSTOMER_UI_URL%/}\""
+fi
 
 echo "=== 1. Authenticating kcadm in container ==="
 sudo docker exec "$KEYCLOAK_CONTAINER" /opt/keycloak/bin/kcadm.sh config credentials \
@@ -49,9 +59,9 @@ if ! sudo docker exec "$KEYCLOAK_CONTAINER" /opt/keycloak/bin/kcadm.sh get clien
     -s publicClient=false \
     -s standardFlowEnabled=true \
     -s directAccessGrantsEnabled=true \
-    -s serviceAccountsEnabled=true \
-    -s 'redirectUris=["*"]' \
-    -s 'webOrigins=["*"]'
+    -s serviceAccountsEnabled=false \
+    -s "redirectUris=[$REDIRECT_URIS]" \
+    -s "webOrigins=[$WEB_ORIGINS]"
 else
   echo "Client '$CLIENT_ID' already exists."
 fi

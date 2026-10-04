@@ -23,7 +23,7 @@ set -euo pipefail
 KC_BASE="${KC_BASE:-https://keycloak.YOUR_KEYCLOAK_IP.nip.io}"
 REALM="${REALM:-apigee-demo}"
 KC_ADMIN_USER="${KC_ADMIN_USER:-admin}"
-: "${KC_ADMIN_PASS:?KC_ADMIN_PASS must be set}"
+: "YOUR_KEYCLOAK_ADMIN_PASSWORD"
 DEV_CLIENT_ID="${DEV_CLIENT_ID:-biscuit-coffee-agent-dev}"
 : "${DEV_CLIENT_SECRET:?DEV_CLIENT_SECRET must be set}"
 
@@ -61,8 +61,8 @@ PAYLOAD=$(jq -n --arg id "$DEV_CLIENT_ID" --arg secret "$DEV_CLIENT_SECRET" '{
   standardFlowEnabled: true,
   directAccessGrantsEnabled: true,
   serviceAccountsEnabled: false,
-  redirectUris: ["*"],
-  webOrigins: ["*"],
+  redirectUris: ["http://localhost:3000/*", "http://127.0.0.1:3000/*"],
+  webOrigins: ["http://localhost:3000", "http://127.0.0.1:3000"],
   protocolMappers: [{
     name: "biscuit-coffee-audience",
     protocol: "openid-connect",
