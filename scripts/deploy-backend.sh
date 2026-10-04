@@ -12,10 +12,15 @@ REGION="${GOOGLE_CLOUD_REGION:-asia-southeast1}"
 echo "================================================="
 echo "Deploying biscuit-coffee-backend to Cloud Run..."
 echo "================================================="
+# Order approvals are decided in the Staff app (decideOrder writes the decision
+# directly), so the backend needs no Application Integration settings. The
+# --remove-env-vars clears the old INTEGRATION_* keys from services deployed
+# before that change; it is a no-op once they are gone. Other env vars stay.
 gcloud run deploy biscuit-coffee-backend \
   --source=./coffee-shop-backend \
   --project="$PROJECT" \
   --region="$REGION" \
+  --remove-env-vars="INTEGRATION_SA_EMAIL,INTEGRATION_SA_ID,INTEGRATION_REGION" \
   --quiet
 
 echo "Backend deployment complete."
