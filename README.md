@@ -142,10 +142,10 @@ Reaching the staff agent alone gives nothing: every tool call still needs a staf
 ## 🏛️ High-Level Architecture
 
 <p align="center">
-  <img src="docs/architecture_diagram_v5.png" alt="Google Cloud Apigee X AI Gateway Coffee Shop Architecture (Customer app + Staff app, staff-app approvals)" width="100%">
+  <img src="docs/architecture_diagram_v8.png" alt="Apigee X — Safe AI Assistants for Biscuit Coffee Shop: Keycloak sign-in, Apigee X AI security gateway (identity, tool translation and rate limits, role checks, spending rules), Cloud Logging audit, Cloud Run store backend and a third-party MCP server" width="100%">
 </p>
 
-Older diagrams: [v4 (with Application Integration approvals)](docs/architecture_diagram_v4.png), [original single-app diagram](docs/architecture_diagram.png).
+Older diagrams: [v5 (detailed: both Apigee proxies, staff-app approvals)](docs/architecture_diagram_v5.png), [v4 (with Application Integration approvals)](docs/architecture_diagram_v4.png), [original single-app diagram](docs/architecture_diagram.png).
 
 ### End-to-End Architectural Flow
 
@@ -387,7 +387,8 @@ The demo includes a modern, responsive web application designed with the **Googl
 └── docs/                                 # Architectural documentation & visual assets
     ├── architecture_diagram.png          # Older: original architecture diagram (single app)
     ├── architecture_diagram_v4.png       # Older: Customer + Staff app with Application Integration approvals
-    ├── architecture_diagram_v5.png       # Current diagram: Customer + Staff app, approvals in the staff app
+    ├── architecture_diagram_v5.png       # Older: detailed Customer + Staff app view (both Apigee proxies)
+    ├── architecture_diagram_v8.png       # Current diagram (also shown in the web app's architecture view)
     └── webui-screenshot.png              # Live web application interface screenshot
 ```
 
