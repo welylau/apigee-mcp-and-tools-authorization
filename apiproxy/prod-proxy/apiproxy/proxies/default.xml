@@ -42,6 +42,27 @@
         <Name>JWT-VerifyToken</Name>
         <Condition>not (proxy.pathsuffix ~~ "^/(location|hours|menu)/?$")</Condition>
       </Step>
+      <!-- AUDIT: verified end-user identity + role from the Keycloak JWT.
+           Captured straight after verification and BEFORE any check that can
+           refuse the call (403 unknown client, 429 rate limit, 503 product
+           unavailable), so those refusals are attributed in the audit log
+           too. Reads JWT claims only; nothing here depends on the product. -->
+      <Step>
+        <Name>AM-AuditEndUser</Name>
+        <Condition>jwt.JWT-VerifyToken.valid = true</Condition>
+      </Step>
+      <Step>
+        <Name>AM-AuditRoleCustomer</Name>
+        <Condition>(jwt.JWT-VerifyToken.valid = true) and (jwt.JWT-VerifyToken.claim.scope ~~ ".*\bbiscuit_coffee_customer\b.*")</Condition>
+      </Step>
+      <Step>
+        <Name>AM-AuditRoleStaff</Name>
+        <Condition>(jwt.JWT-VerifyToken.valid = true) and (jwt.JWT-VerifyToken.claim.scope ~~ ".*\bbiscuit_coffee_staff\b.*")</Condition>
+      </Step>
+      <Step>
+        <Name>AM-AuditRoleManager</Name>
+        <Condition>(jwt.JWT-VerifyToken.valid = true) and (jwt.JWT-VerifyToken.claim.scope ~~ ".*\bbiscuit_coffee_manager\b.*")</Condition>
+      </Step>
       <!-- Which API Product governs this caller? Chosen from the verified azp
            claim via the azp-products property set. Unknown client = 403. -->
       <Step>
@@ -52,14 +73,27 @@
         <Name>RF-Client-Not-Allowed</Name>
         <Condition>(jwt.JWT-VerifyToken.valid = true) and (product.known != "true")</Condition>
       </Step>
-      <!-- Per-user burst protection (30/min per JWT sub) on every authenticated flow. -->
+      <!-- Per-user burst protection (30/min per JWT sub) on every authenticated flow.
+           Refuse ONLY when the window is genuinely full: failed = true AND
+           available.count < 1. failed = true on its own also fires on
+           SpikeArrest's fail-open internal failures (Apigee reference), which
+           produced spurious 429s. Measured on default-dev (40 calls in 4 s):
+           2 of the first 30 calls had failed = true with available.count 29
+           (spurious, must pass), calls 31-40 had failed = true with
+           available.count 0 (genuine). exceed.count stayed 0 on every call, so
+           the documented exceed.count > 0 check does not work on this runtime.
+           AM-AuditRateLimit records both cases for the audit log. -->
       <Step>
         <Name>SA-PerUser</Name>
         <Condition>jwt.JWT-VerifyToken.valid = true</Condition>
       </Step>
       <Step>
-        <Name>RF-Too-Many-Requests</Name>
+        <Name>AM-AuditRateLimit</Name>
         <Condition>(jwt.JWT-VerifyToken.valid = true) and (ratelimit.SA-PerUser.failed = true)</Condition>
+      </Step>
+      <Step>
+        <Name>RF-Too-Many-Requests</Name>
+        <Condition>(jwt.JWT-VerifyToken.valid = true) and (ratelimit.SA-PerUser.failed = true) and (ratelimit.SA-PerUser.available.count &lt; 1)</Condition>
       </Step>
       <!-- Product attributes (maxOrderAmount, approvalThreshold,
            enforceOrderOwnership), read by this proxy and cached 60s. -->
@@ -82,23 +116,6 @@
       <Step>
         <Name>PC-ProductAttrs</Name>
         <Condition>(jwt.JWT-VerifyToken.valid = true) and (productattrs.cacheable = "true")</Condition>
-      </Step>
-      <!-- AUDIT: verified end-user identity + role from the Keycloak JWT. -->
-      <Step>
-        <Name>AM-AuditEndUser</Name>
-        <Condition>jwt.JWT-VerifyToken.valid = true</Condition>
-      </Step>
-      <Step>
-        <Name>AM-AuditRoleCustomer</Name>
-        <Condition>(jwt.JWT-VerifyToken.valid = true) and (jwt.JWT-VerifyToken.claim.scope ~~ ".*\bbiscuit_coffee_customer\b.*")</Condition>
-      </Step>
-      <Step>
-        <Name>AM-AuditRoleStaff</Name>
-        <Condition>(jwt.JWT-VerifyToken.valid = true) and (jwt.JWT-VerifyToken.claim.scope ~~ ".*\bbiscuit_coffee_staff\b.*")</Condition>
-      </Step>
-      <Step>
-        <Name>AM-AuditRoleManager</Name>
-        <Condition>(jwt.JWT-VerifyToken.valid = true) and (jwt.JWT-VerifyToken.claim.scope ~~ ".*\bbiscuit_coffee_manager\b.*")</Condition>
       </Step>
       <Step>
         <Name>EV-GetId</Name>

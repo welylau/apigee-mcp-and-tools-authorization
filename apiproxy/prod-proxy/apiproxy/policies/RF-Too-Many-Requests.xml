@@ -1,5 +1,8 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<!-- SA-PerUser tripped. -->
+<!-- SA-PerUser refused the call. Raised only when ratelimit.SA-PerUser.failed
+     = true AND ratelimit.SA-PerUser.available.count < 1 (see the PreFlow
+     step), never on failed alone, which also fires on the policy's fail-open
+     internal errors (see SA-PerUser.xml). -->
 <RaiseFault continueOnError="false" enabled="true" name="RF-Too-Many-Requests">
   <DisplayName>RF-Too-Many-Requests</DisplayName>
   <FaultResponse>

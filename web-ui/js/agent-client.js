@@ -803,6 +803,36 @@ export class AdkAgentClient {
       };
     }
 
+    // --- Gateway burst protection: per-user spike arrest ---------------------
+    // `too_many_requests` is emitted by RF-Too-Many-Requests on
+    // Biscuit-Coffee-Shop when SA-PerUser refuses a call: more than 30 calls a
+    // minute from one verified user, on any tool. Keyed on the code rather
+    // than the sentence. It is a different control from the per-tool MCP
+    // quota below, whose body never carries this code, so it gets its own
+    // label instead of falling through to the generic "Scope Blocked" card.
+    if (innerText.includes('too_many_requests') || respStr.includes('too_many_requests')) {
+      let message = '';
+      try {
+        message = (JSON.parse(innerText) || {}).message || '';
+      } catch (e) {
+        message = '';
+      }
+      return {
+        status: '429 Too Many Requests',
+        statusNote: 'Rate Limit Policy',
+        statusClass: 'policy-blocked',
+        success: false,
+        isPolicyBlock: true,
+        endpoint: 'Apigee → Biscuit-Coffee-Shop → PreFlow (every authenticated call)',
+        policy: 'SA-PerUser → RF-Too-Many-Requests',
+        enforcedBy: 'Per-user spike arrest on Biscuit-Coffee-Shop (30 calls / minute per verified user)',
+        // Applies to every scope: it is the call rate that was refused.
+        scopeRequired: 'any (applies to every authenticated call)',
+        resultLabel: 'Policy Result',
+        error: message || "You're sending requests a little too quickly. Please wait a few seconds and try again."
+      };
+    }
+
     // --- Business policy: per-tool rate limit --------------------------------
     // The agent's transport shim only lets a response body survive a non-2xx
     // status for HTTP 429 (POLICY_FAULT_STATUSES in tools.py). Every other

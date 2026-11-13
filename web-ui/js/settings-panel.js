@@ -846,7 +846,7 @@ export class SettingsPanel {
           e.app ? el('div', { className: 's-sub-meta', text: e.app }) : null,
         ]),
         el('td', {}, [
-          el('div', { className: 's-mono', text: e.tool || e.path || '—' }),
+          el('div', { className: 's-mono', text: e.tool || (e.path ? `${e.verb} ${e.path}`.trim() : '—') }),
           e.tool && e.path ? el('div', { className: 's-sub-meta', text: `${e.verb} ${e.path}` }) : null,
         ]),
         el('td', {}, [el('div', { text: e.environment || '—' }), el('div', { className: 's-sub-meta', text: `${e.proxy} r${e.revision}` })]),
