@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!--
+  AUDIT LOGGING - records what SA-PerUser decided, for ML-AuditJwtAccess.
+
+  Runs whenever the spike arrest reports failed = true. Per the Apigee
+  SpikeArrest reference that flag is NOT a violation on its own: the policy is
+  fail-open and may set it on an internal execution failure. On this runtime
+  it is set both for genuine violations and for those spurious failures, and
+  available.count tells them apart (exceed.count stays 0 in both cases).
+
+  Reading the audit row (detail.rate_limit_*):
+    status 429, rate_limit_available_count 0   -> limit genuinely exceeded
+    other status, rate_limit_available_count > 0 -> spurious failure, allowed
+-->
+<AssignMessage continueOnError="true" enabled="true" name="AM-AuditRateLimit">
+  <DisplayName>AM-AuditRateLimit</DisplayName>
+  <AssignVariable>
+    <Name>audit.ratelimit.key</Name>
+    <Template>{caller.id}</Template>
+  </AssignVariable>
+  <AssignVariable>
+    <Name>audit.ratelimit.failed</Name>
+    <Template>{ratelimit.SA-PerUser.failed}</Template>
+  </AssignVariable>
+  <AssignVariable>
+    <Name>audit.ratelimit.exceed_count</Name>
+    <Template>{ratelimit.SA-PerUser.exceed.count}</Template>
+  </AssignVariable>
+  <AssignVariable>
+    <Name>audit.ratelimit.available_count</Name>
+    <Template>{ratelimit.SA-PerUser.available.count}</Template>
+  </AssignVariable>
+  <IgnoreUnresolvedVariables>true</IgnoreUnresolvedVariables>
+  <AssignTo createNew="false" transport="http" type="request"/>
+</AssignMessage>

@@ -110,7 +110,11 @@ function run() {
     // the RaiseFault still fires.
     context.setVariable("order.needs_lookup", "true");
     context.setVariable("order.ownership_ok", "false");
-    context.setVariable("order.ownership_reason", "lookup_pending");
+    // Audit label only (ML-AuditJwtAccess): the list path (no id) is
+    // protected by the pinned filter, not by a per-order lookup.
+    context.setVariable(
+      "order.ownership_reason", orderId ? "lookup_pending" : "list_pinned"
+    );
     return;
   }
 

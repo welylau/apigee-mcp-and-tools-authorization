@@ -54,6 +54,7 @@
         <Policy>RF-Product-Unavailable</Policy>
         <!-- Per-user limits -->
         <Policy>SA-PerUser</Policy>
+        <Policy>AM-AuditRateLimit</Policy>
         <Policy>RF-Too-Many-Requests</Policy>
         <Policy>QU-PlaceOrderPerUser</Policy>
         <Policy>RF-Order-Rate-Limited</Policy>

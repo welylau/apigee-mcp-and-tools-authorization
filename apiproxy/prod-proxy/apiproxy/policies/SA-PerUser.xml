@@ -5,6 +5,18 @@
   (an agent turn often makes several calls at once) instead of smoothing to
   one call every 2 seconds. continueOnError so RF-Too-Many-Requests can return
   a friendly body.
+
+  That RaiseFault fires only when ratelimit.SA-PerUser.failed = true AND
+  ratelimit.SA-PerUser.available.count < 1. The Apigee SpikeArrest reference:
+  failed is "true if the policy experienced an internal execution failure ...
+  should not be used to check if a rate limit has been exceeded. It may be set
+  to true under high load due to the policy's fail-open design." Refusing on
+  failed alone turned those events into sporadic 429s for users far below the
+  limit (one call in three minutes, or a 12/min staff-board poll).
+  The reference suggests exceed.count > 0 instead, but on this runtime
+  exceed.count stayed 0 even for genuine violations (default-dev burst test,
+  calls 31-40 of 40 in 4 s: failed true, available.count 0, exceed.count 0),
+  while spurious failures showed available.count 29.
 -->
 <SpikeArrest continueOnError="true" enabled="true" name="SA-PerUser">
   <DisplayName>SA-PerUser</DisplayName>

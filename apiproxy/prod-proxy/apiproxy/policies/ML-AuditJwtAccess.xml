@@ -6,6 +6,24 @@
 
   PostClientFlow, gated on jwt.JWT-VerifyToken.valid = true, so public paths
   (/menu, /hours, /location) without a token are not logged.
+
+  detail carries the gateway's own decision for the call, so a refused
+  request explains itself in the audit trail without that reason ever
+  reaching the caller (who only sees the generic 404/403 body):
+    order_id            - order from the path (order flows only)
+    ownership_enforced  - product attribute enforceOrderOwnership, as applied
+    ownership_result    - checkOrderOwnership.js reason: owner_match,
+                          not_owner, not_found, lookup_failed, manager_bypass,
+                          enforcement_disabled, list_pinned, invalid_order_id ...
+    product             - API Product resolved from the verified azp
+    fault               - fault.name when the call was refused (e.g. RaiseFault)
+    rate_limit_*        - SA-PerUser outcome, set by AM-AuditRateLimit only
+                          when the policy reported failed = true: key
+                          (identifier counted), failed, exceed_count,
+                          available_count. available_count 0 with status 429
+                          = genuine violation; available_count > 0 = spurious
+                          failure that was let through
+  Unresolved variables render as "" and are dropped by the admin panel.
 -->
 <MessageLogging continueOnError="true" enabled="true" name="ML-AuditJwtAccess">
   <DisplayName>ML-AuditJwtAccess</DisplayName>
@@ -38,6 +56,17 @@
     "path": "{escapeJSON(proxy.basepath)}{escapeJSON(proxy.pathsuffix)}",
     "status": "{firstnonnull(response.status.code,error.status.code,message.status.code)}",
     "client_ip": "{client.ip}"
+  },
+  "detail": {
+    "order_id": "{escapeJSON(order.id)}",
+    "ownership_enforced": "{order.enforce_ownership}",
+    "ownership_result": "{escapeJSON(order.ownership_reason)}",
+    "product": "{escapeJSON(product.name)}",
+    "fault": "{escapeJSON(fault.name)}",
+    "rate_limit_key": "{escapeJSON(audit.ratelimit.key)}",
+    "rate_limit_failed": "{audit.ratelimit.failed}",
+    "rate_limit_exceed_count": "{audit.ratelimit.exceed_count}",
+    "rate_limit_available_count": "{audit.ratelimit.available_count}"
   }
 }</Message>
     <!-- Labels are static (Cloud Logging labels are not template-resolved);
